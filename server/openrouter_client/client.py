@@ -60,6 +60,7 @@ async def request_chat_completion(
     payload: Dict[str, object] = {
         "model": model,
         "messages": _build_messages(messages, system),
+        "max_tokens": 2048,
         "stream": False,
     }
     if tools:
