@@ -30,6 +30,7 @@ _load_env_file()
 
 DEFAULT_APP_NAME = "OpenPoke Server"
 DEFAULT_APP_VERSION = "0.3.0"
+DEFAULT_OPENROUTER_CHAT_MODEL = "qwen/qwen3-coder:free"
 
 
 def _env_int(name: str, fallback: int) -> int:
@@ -51,11 +52,11 @@ class Settings(BaseModel):
     server_port: int = Field(default=_env_int("OPENPOKE_PORT", 8001))
 
     # LLM model selection
-    interaction_agent_model: str = Field(default="anthropic/claude-sonnet-4")
-    execution_agent_model: str = Field(default="anthropic/claude-sonnet-4")
-    execution_agent_search_model: str = Field(default="anthropic/claude-sonnet-4")
-    summarizer_model: str = Field(default="anthropic/claude-sonnet-4")
-    email_classifier_model: str = Field(default="anthropic/claude-sonnet-4")
+    interaction_agent_model: str = Field(default=DEFAULT_OPENROUTER_CHAT_MODEL)
+    execution_agent_model: str = Field(default=DEFAULT_OPENROUTER_CHAT_MODEL)
+    execution_agent_search_model: str = Field(default=DEFAULT_OPENROUTER_CHAT_MODEL)
+    summarizer_model: str = Field(default=DEFAULT_OPENROUTER_CHAT_MODEL)
+    email_classifier_model: str = Field(default=DEFAULT_OPENROUTER_CHAT_MODEL)
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(default=os.getenv("OPENROUTER_API_KEY"))
