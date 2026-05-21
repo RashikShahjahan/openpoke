@@ -23,6 +23,17 @@ from .gmail import (
 from .trigger_scheduler import get_trigger_scheduler
 from .triggers import get_trigger_service
 from .timezone_store import TimezoneStore, get_timezone_store
+from .web_watchers import (
+    WebPageSnapshot,
+    WebPageSnapshotError,
+    WebWatcherCheckResult,
+    WebWatcherRecord,
+    WebWatcherService,
+    evaluate_web_watcher_update,
+    fetch_web_page_snapshot,
+    get_web_watcher_service,
+    parse_web_watcher_evaluation,
+)
 
 
 __all__ = [
@@ -49,4 +60,13 @@ __all__ = [
     "get_trigger_service",
     "TimezoneStore",
     "get_timezone_store",
+    "WebPageSnapshot",
+    "WebPageSnapshotError",
+    "WebWatcherCheckResult",
+    "WebWatcherRecord",
+    "WebWatcherService",
+    "evaluate_web_watcher_update",
+    "fetch_web_page_snapshot",
+    "get_web_watcher_service",
+    "parse_web_watcher_evaluation",
 ]

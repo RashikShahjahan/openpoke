@@ -65,6 +65,7 @@ class Settings(BaseModel):
     execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
     summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
     email_classifier_model: str = Field(default=_env_model("OPENPOKE_EMAIL_CLASSIFIER_MODEL"))
+    web_watcher_evaluator_model: str = Field(default=_env_model("OPENPOKE_WEB_WATCHER_EVALUATOR_MODEL"))
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(
