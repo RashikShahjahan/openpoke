@@ -136,7 +136,7 @@ class ExecutionAgentRuntime:
             )
 
         except Exception as e:
-            logger.error(f"[{self.agent.name}] Execution failed: {e}")
+            logger.exception("[%s] Execution failed: %s", self.agent.name, e)
             error_msg = str(e)
             failure_text = f"Failed to complete task: {error_msg}"
             self.agent.record_response(f"Error: {error_msg}")
@@ -233,4 +233,5 @@ class ExecutionAgentRuntime:
                 result = await result
             return True, result
         except Exception as e:
+            logger.exception("[%s] Tool '%s' failed: %s", self.agent.name, tool_name, e)
             return False, {"error": str(e)}

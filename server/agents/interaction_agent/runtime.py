@@ -89,7 +89,7 @@ class InteractionAgentRuntime:
             )
 
         except Exception as exc:
-            logger.error("Interaction agent failed", extra={"error": str(exc)})
+            logger.exception("Interaction agent failed: %s", exc)
             return InteractionResult(
                 success=False,
                 response="",
@@ -128,7 +128,7 @@ class InteractionAgentRuntime:
             )
 
         except Exception as exc:
-            logger.error("Interaction agent (agent message) failed", extra={"error": str(exc)})
+            logger.exception("Interaction agent (agent message) failed: %s", exc)
             return InteractionResult(
                 success=False,
                 response="",
@@ -303,10 +303,7 @@ class InteractionAgentRuntime:
             self._log_tool_invocation(tool_call, stage="start")
             result = await handle_tool_call(tool_call.name, tool_call.arguments)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error(
-                "Tool execution crashed",
-                extra={"tool": tool_call.name, "error": str(exc)},
-            )
+            logger.exception("Tool execution crashed for '%s': %s", tool_call.name, exc)
             self._log_tool_invocation(
                 tool_call,
                 stage="error",

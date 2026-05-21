@@ -157,7 +157,7 @@ def send_message_to_agent(agent_name: str, instructions: str) -> ToolResult:
             status = "SUCCESS" if result.success else "FAILED"
             logger.info(f"Agent '{agent_name}' completed: {status}")
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error(f"Agent '{agent_name}' failed: {str(exc)}")
+            logger.exception("Agent '%s' failed: %s", agent_name, exc)
 
     try:
         loop = asyncio.get_running_loop()
