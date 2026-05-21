@@ -84,6 +84,28 @@ class AgentSearchIndex:
         results.sort(key=lambda result: result.score, reverse=True)
         return results[:limit]
 
+    async def ensure_agent_embedding(self, agent_name: str) -> bool:
+        """Create and cache an embedding for an existing agent if missing."""
+
+        normalized_name = agent_name.strip()
+        if not normalized_name:
+            return False
+
+        self._roster.load()
+        agent_names = self._roster.get_agents()
+        if normalized_name not in agent_names:
+            return False
+
+        index = self._load_index()
+        embeddings = self._extract_cached_embeddings(index)
+        if normalized_name in embeddings:
+            return False
+
+        embedding = (await self._embed_texts([normalized_name]))[0]
+        embeddings[normalized_name] = embedding
+        self._save_embeddings(embeddings, valid_agent_names=agent_names)
+        return True
+
     def _load_index(self) -> dict[str, Any]:
         """Load the persisted embedding index."""
 
