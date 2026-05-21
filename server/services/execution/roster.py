@@ -1,5 +1,6 @@
 """Simple agent roster management - just a list of agent names."""
 
+import asyncio
 import json
 import fcntl
 import time
@@ -65,6 +66,27 @@ class AgentRoster:
         if agent_name not in self._agents:
             self._agents.append(agent_name)
             self.save()
+            self._schedule_agent_embedding(agent_name)
+
+    def _schedule_agent_embedding(self, agent_name: str) -> None:
+        """Cache a new agent's embedding when roster updates happen in an event loop."""
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _embed_agent() -> None:
+            try:
+                from .agent_search import get_agent_search_index
+
+                created = await get_agent_search_index().ensure_agent_embedding(agent_name)
+                if created:
+                    logger.info(f"Agent embedding cached: {agent_name}")
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"Failed to cache agent embedding for '{agent_name}': {exc}")
+
+        loop.create_task(_embed_agent())
 
     def get_agents(self) -> list[str]:
         """Get list of all agent names."""

@@ -30,6 +30,12 @@ _load_env_file()
 
 DEFAULT_APP_NAME = "OpenPoke Server"
 DEFAULT_APP_VERSION = "0.3.0"
+DEFAULT_LLM_API_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENROUTER_CHAT_MODEL = "openrouter/free"
+
+
+def _env_model(name: str) -> str:
+    return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL") or DEFAULT_OPENROUTER_CHAT_MODEL
 
 
 def _env_int(name: str, fallback: int) -> int:
@@ -50,15 +56,20 @@ class Settings(BaseModel):
     server_host: str = Field(default=os.getenv("OPENPOKE_HOST", "0.0.0.0"))
     server_port: int = Field(default=_env_int("OPENPOKE_PORT", 8001))
 
-    # LLM model selection
-    interaction_agent_model: str = Field(default="anthropic/claude-sonnet-4")
-    execution_agent_model: str = Field(default="anthropic/claude-sonnet-4")
-    execution_agent_search_model: str = Field(default="anthropic/claude-sonnet-4")
-    summarizer_model: str = Field(default="anthropic/claude-sonnet-4")
-    email_classifier_model: str = Field(default="anthropic/claude-sonnet-4")
+    # LLM API and model selection
+    llm_api_base_url: str = Field(
+        default=os.getenv("OPENPOKE_LLM_BASE_URL", DEFAULT_LLM_API_BASE_URL)
+    )
+    interaction_agent_model: str = Field(default=_env_model("OPENPOKE_INTERACTION_AGENT_MODEL"))
+    execution_agent_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
+    execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
+    summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
+    email_classifier_model: str = Field(default=_env_model("OPENPOKE_EMAIL_CLASSIFIER_MODEL"))
 
     # Credentials / integrations
-    openrouter_api_key: Optional[str] = Field(default=os.getenv("OPENROUTER_API_KEY"))
+    openrouter_api_key: Optional[str] = Field(
+        default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
+    )
     composio_gmail_auth_config_id: Optional[str] = Field(default=os.getenv("COMPOSIO_GMAIL_AUTH_CONFIG_ID"))
     composio_api_key: Optional[str] = Field(default=os.getenv("COMPOSIO_API_KEY"))
 

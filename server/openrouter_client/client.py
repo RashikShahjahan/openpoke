@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from ..config import get_settings
+from ..config import DEFAULT_LLM_API_BASE_URL, get_settings
 
-OpenRouterBaseURL = "https://openrouter.ai/api/v1"
+OpenRouterBaseURL = DEFAULT_LLM_API_BASE_URL
 
 
 class OpenRouterError(RuntimeError):
@@ -53,19 +53,21 @@ async def request_chat_completion(
     system: Optional[str] = None,
     api_key: Optional[str] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
-    base_url: str = OpenRouterBaseURL,
+    base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Request a chat completion and return the raw JSON payload."""
 
     payload: Dict[str, object] = {
         "model": model,
         "messages": _build_messages(messages, system),
+        "max_tokens": 2048,
         "stream": False,
     }
     if tools:
         payload["tools"] = tools
 
-    url = f"{base_url.rstrip('/')}/chat/completions"
+    resolved_base_url = base_url or get_settings().llm_api_base_url
+    url = f"{resolved_base_url.rstrip('/')}/chat/completions"
 
     async with httpx.AsyncClient() as client:
         try:
@@ -88,4 +90,47 @@ async def request_chat_completion(
     raise OpenRouterError("OpenRouter request failed: unknown error")
 
 
-__all__ = ["OpenRouterError", "request_chat_completion", "OpenRouterBaseURL"]
+async def request_embeddings(
+    *,
+    model: str,
+    input: str | List[str],
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Request embeddings and return the raw JSON payload."""
+
+    payload: Dict[str, object] = {
+        "model": model,
+        "input": input,
+    }
+
+    resolved_base_url = base_url or get_settings().llm_api_base_url
+    url = f"{resolved_base_url.rstrip('/')}/embeddings"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                url,
+                headers=_headers(api_key=api_key),
+                json=payload,
+                timeout=60.0,
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _handle_response_error(exc)
+            return response.json()
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - handled above
+            _handle_response_error(exc)
+        except httpx.HTTPError as exc:
+            raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
+
+    raise OpenRouterError("OpenRouter request failed: unknown error")
+
+
+__all__ = [
+    "OpenRouterError",
+    "request_chat_completion",
+    "request_embeddings",
+    "OpenRouterBaseURL",
+]

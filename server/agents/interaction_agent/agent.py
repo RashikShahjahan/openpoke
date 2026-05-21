@@ -1,6 +1,5 @@
 """Interaction agent helpers for prompt construction."""
 
-from html import escape
 from pathlib import Path
 from typing import Dict, List
 
@@ -22,11 +21,11 @@ def prepare_message_with_history(
     transcript: str,
     message_type: str = "user",
 ) -> List[Dict[str, str]]:
-    """Compose a message that bundles history, roster, and the latest turn."""
+    """Compose a message that bundles history, agent guidance, and the latest turn."""
     sections: List[str] = []
 
     sections.append(_render_conversation_history(transcript))
-    sections.append(f"<active_agents>\n{_render_active_agents()}\n</active_agents>")
+    sections.append(f"<execution_agents>\n{_render_execution_agent_guidance()}\n</execution_agents>")
     sections.append(_render_current_turn(latest_text, message_type))
 
     content = "\n\n".join(sections)
@@ -41,21 +40,19 @@ def _render_conversation_history(transcript: str) -> str:
     return f"<conversation_history>\n{history}\n</conversation_history>"
 
 
-# Format currently active execution agents into XML tags for LLM awareness
-def _render_active_agents() -> str:
+# Format execution-agent availability without listing every agent name.
+def _render_execution_agent_guidance() -> str:
     roster = get_agent_roster()
     roster.load()
-    agents = roster.get_agents()
+    agent_count = len(roster.get_agents())
 
-    if not agents:
-        return "None"
+    if agent_count == 0:
+        return "No existing execution agents. Create one with send_message_to_agent when needed."
 
-    rendered: List[str] = []
-    for agent_name in agents:
-        name = escape(agent_name or "agent", quote=True)
-        rendered.append(f'<agent name="{name}" />')
-
-    return "\n".join(rendered)
+    return (
+        f"{agent_count} existing execution agents are available. "
+        "Use search_agents to find relevant existing agents before reusing one."
+    )
 
 
 # Wrap the current message in appropriate XML tags based on sender type

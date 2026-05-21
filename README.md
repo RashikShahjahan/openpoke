@@ -27,7 +27,8 @@ OpenPoke is a simplified, open-source take on [Interaction Company’s](https://
    **OpenRouter (Required)**
    - Create an account at [openrouter.ai](https://openrouter.ai/)
    - Generate an API key
-   - Replace `your_openrouter_api_key_here` with your actual key in `.env`
+    - Replace `your_openrouter_api_key_here` with your actual key in `.env`
+   - Optional: point the app at any OpenAI-compatible LLM API by setting `OPENPOKE_LLM_BASE_URL`, `OPENPOKE_LLM_API_KEY`, and `OPENPOKE_LLM_MODEL`. OpenRouter defaults to `openrouter/free`.
    
    **Composio (Required for Gmail)**
    - Sign in at [composio.dev](https://composio.dev/)
