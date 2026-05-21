@@ -45,4 +45,19 @@ class WebPageSnapshot(BaseModel):
     fetched_at: str
 
 
-__all__ = ["WebPageSnapshot", "WebWatcherCreate", "WebWatcherRecord"]
+class WebWatcherEvaluation(BaseModel):
+    """LLM decision about whether a watcher update should notify the user."""
+
+    changed: bool
+    relevant: bool
+    summary: Optional[str] = None
+    evidence: Optional[str] = None
+    new_snapshot_summary: str
+
+
+__all__ = [
+    "WebPageSnapshot",
+    "WebWatcherCreate",
+    "WebWatcherEvaluation",
+    "WebWatcherRecord",
+]

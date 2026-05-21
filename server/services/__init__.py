@@ -28,8 +28,10 @@ from .web_watchers import (
     WebPageSnapshotError,
     WebWatcherRecord,
     WebWatcherService,
+    evaluate_web_watcher_update,
     fetch_web_page_snapshot,
     get_web_watcher_service,
+    parse_web_watcher_evaluation,
 )
 
 
@@ -61,6 +63,8 @@ __all__ = [
     "WebPageSnapshotError",
     "WebWatcherRecord",
     "WebWatcherService",
+    "evaluate_web_watcher_update",
     "fetch_web_page_snapshot",
     "get_web_watcher_service",
+    "parse_web_watcher_evaluation",
 ]
