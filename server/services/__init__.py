@@ -26,6 +26,7 @@ from .timezone_store import TimezoneStore, get_timezone_store
 from .web_watchers import (
     WebPageSnapshot,
     WebPageSnapshotError,
+    WebWatcherCheckResult,
     WebWatcherRecord,
     WebWatcherService,
     evaluate_web_watcher_update,
@@ -61,6 +62,7 @@ __all__ = [
     "get_timezone_store",
     "WebPageSnapshot",
     "WebPageSnapshotError",
+    "WebWatcherCheckResult",
     "WebWatcherRecord",
     "WebWatcherService",
     "evaluate_web_watcher_update",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import WebPageSnapshot, WebWatcherCreate, WebWatcherRecord
+from .models import WebPageSnapshot, WebWatcherCheckResult, WebWatcherCreate, WebWatcherRecord
 from .evaluator import evaluate_web_watcher_update, parse_web_watcher_evaluation
 from .service import WebWatcherService
 from .snapshot import WebPageSnapshotError, fetch_web_page_snapshot, summarize_initial_snapshot
@@ -22,6 +22,7 @@ def get_web_watcher_service() -> WebWatcherService:
 __all__ = [
     "WebPageSnapshot",
     "WebPageSnapshotError",
+    "WebWatcherCheckResult",
     "WebWatcherCreate",
     "WebWatcherRecord",
     "WebWatcherService",

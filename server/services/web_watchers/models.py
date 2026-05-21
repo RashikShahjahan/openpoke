@@ -55,9 +55,21 @@ class WebWatcherEvaluation(BaseModel):
     new_snapshot_summary: str
 
 
+class WebWatcherCheckResult(BaseModel):
+    """Result from checking a watcher against its current page snapshot."""
+
+    watcher: WebWatcherRecord
+    changed: bool
+    relevant: bool
+    summary: Optional[str] = None
+    evidence: Optional[str] = None
+    snapshot_hash: str
+
+
 __all__ = [
     "WebPageSnapshot",
     "WebWatcherCreate",
+    "WebWatcherCheckResult",
     "WebWatcherEvaluation",
     "WebWatcherRecord",
 ]
