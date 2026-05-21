@@ -15,6 +15,7 @@ class WebWatcherRecord(BaseModel):
     url: str
     condition: str
     cadence_rule: Optional[str] = None
+    trigger_id: Optional[int] = None
     status: str
     last_snapshot_hash: Optional[str] = None
     last_snapshot_summary: Optional[str] = None

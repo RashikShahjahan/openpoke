@@ -6,7 +6,12 @@ import json
 from typing import Any, Callable, Dict, List, Optional
 
 from server.services.execution import get_execution_agent_logs
+from server.services.timezone_store import get_timezone_store
+from server.services.triggers import get_trigger_service
 from server.services.web_watchers import WebWatcherRecord, get_web_watcher_service
+
+
+DEFAULT_WATCHER_CADENCE_RULE = "RRULE:FREQ=DAILY"
 
 
 _SCHEMAS: List[Dict[str, Any]] = [
@@ -113,6 +118,7 @@ _SCHEMAS: List[Dict[str, Any]] = [
 
 _LOG_STORE = get_execution_agent_logs()
 _WATCHER_SERVICE = get_web_watcher_service()
+_TRIGGER_SERVICE = get_trigger_service()
 
 
 def get_schemas() -> List[Dict[str, Any]]:
@@ -138,11 +144,12 @@ async def create_web_watcher(
         "status": status,
     }
     try:
+        resolved_cadence_rule = cadence_rule or DEFAULT_WATCHER_CADENCE_RULE
         watcher, snapshot = await _WATCHER_SERVICE.create_watcher(
             name=name,
             url=url,
             condition=condition,
-            cadence_rule=cadence_rule,
+            cadence_rule=resolved_cadence_rule,
             status=status,
         )
     except Exception as exc:
@@ -152,12 +159,31 @@ async def create_web_watcher(
         )
         return {"error": str(exc)}
 
+    trigger_payload = _build_watcher_trigger_payload(watcher.id)
+    trigger_error: Optional[str] = None
+    trigger_id: Optional[int] = None
+    try:
+        trigger = _TRIGGER_SERVICE.create_trigger(
+            agent_name=agent_name,
+            payload=trigger_payload,
+            recurrence_rule=watcher.cadence_rule or DEFAULT_WATCHER_CADENCE_RULE,
+            timezone_name=get_timezone_store().get_timezone(),
+            status=watcher.status,
+        )
+        trigger_id = trigger.id
+        updated_watcher = _WATCHER_SERVICE.update_watcher(watcher.id, trigger_id=trigger.id)
+        if updated_watcher is not None:
+            watcher = updated_watcher
+    except Exception as exc:  # pragma: no cover - defensive
+        trigger_error = str(exc)
+
     _LOG_STORE.record_action(
         agent_name,
-        description=f"createWebWatcher succeeded | watcher_id={watcher.id}",
+        description=f"createWebWatcher succeeded | watcher_id={watcher.id} | trigger_id={trigger_id}",
     )
-    return {
+    result = {
         "watcher": _watcher_record_to_payload(watcher),
+        "trigger_id": trigger_id,
         "initial_snapshot": {
             "hash": snapshot.content_hash,
             "title": snapshot.title,
@@ -165,6 +191,9 @@ async def create_web_watcher(
             "content_length": len(snapshot.content),
         },
     }
+    if trigger_error:
+        result["trigger_error"] = trigger_error
+    return result
 
 
 async def check_web_watcher(*, agent_name: str, watcher_id: Any) -> Dict[str, Any]:
@@ -231,6 +260,10 @@ def update_web_watcher(
         return {"error": "watcher_id must be an integer"}
 
     try:
+        existing = _WATCHER_SERVICE.get_watcher(watcher_id_int)
+        if existing is None:
+            return {"error": f"Web watcher {watcher_id_int} not found"}
+
         record = _WATCHER_SERVICE.update_watcher(
             watcher_id_int,
             name=name,
@@ -249,11 +282,28 @@ def update_web_watcher(
     if record is None:
         return {"error": f"Web watcher {watcher_id_int} not found"}
 
+    trigger_update_error: Optional[str] = None
+    if record.trigger_id is not None and (cadence_rule is not None or status is not None):
+        try:
+            _TRIGGER_SERVICE.update_trigger(
+                record.trigger_id,
+                agent_name=agent_name,
+                payload=_build_watcher_trigger_payload(record.id),
+                recurrence_rule=record.cadence_rule,
+                timezone_name=get_timezone_store().get_timezone(),
+                status=record.status,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            trigger_update_error = str(exc)
+
     _LOG_STORE.record_action(
         agent_name,
         description=f"updateWebWatcher succeeded | watcher_id={watcher_id_int}",
     )
-    return {"watcher": _watcher_record_to_payload(record)}
+    result = {"watcher": _watcher_record_to_payload(record)}
+    if trigger_update_error:
+        result["trigger_error"] = trigger_update_error
+    return result
 
 
 def _watcher_record_to_payload(record: WebWatcherRecord) -> Dict[str, Any]:
@@ -263,6 +313,7 @@ def _watcher_record_to_payload(record: WebWatcherRecord) -> Dict[str, Any]:
         "url": record.url,
         "condition": record.condition,
         "cadence_rule": record.cadence_rule,
+        "trigger_id": record.trigger_id,
         "status": record.status,
         "last_snapshot_hash": record.last_snapshot_hash,
         "last_snapshot_summary": record.last_snapshot_summary,
@@ -272,6 +323,17 @@ def _watcher_record_to_payload(record: WebWatcherRecord) -> Dict[str, Any]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
+
+
+def _build_watcher_trigger_payload(watcher_id: int) -> str:
+    return (
+        f"Scheduled web watcher check for watcher ID {watcher_id}.\n"
+        f"Call checkWebWatcher with watcher_id={watcher_id}.\n"
+        "If the result has relevant=true, final response must start with "
+        "'Web watcher notification:' and include the watcher name, summary, evidence, and URL.\n"
+        "If the result has relevant=false, final response must be exactly: "
+        f"No relevant web watcher update for watcher {watcher_id}."
+    )
 
 
 def build_registry(agent_name: str) -> Dict[str, Callable[..., Any]]:

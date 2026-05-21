@@ -32,6 +32,7 @@ class WebWatcherService:
             "url": snapshot.url,
             "condition": condition.strip(),
             "cadence_rule": cadence_rule,
+            "trigger_id": None,
             "status": normalize_status(status),
             "last_snapshot_hash": snapshot.content_hash,
             "last_snapshot_summary": summarize_initial_snapshot(snapshot),
@@ -110,6 +111,7 @@ class WebWatcherService:
         condition: Optional[str] = None,
         cadence_rule: Optional[str] = None,
         status: Optional[str] = None,
+        trigger_id: Optional[int] = None,
         last_error: Optional[str] = None,
         clear_error: bool = False,
     ) -> Optional[WebWatcherRecord]:
@@ -122,6 +124,8 @@ class WebWatcherService:
             fields["cadence_rule"] = cadence_rule
         if status is not None:
             fields["status"] = normalize_status(status)
+        if trigger_id is not None:
+            fields["trigger_id"] = trigger_id
         if clear_error:
             fields["last_error"] = None
         elif last_error is not None:

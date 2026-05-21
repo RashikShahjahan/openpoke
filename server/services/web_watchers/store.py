@@ -41,6 +41,7 @@ class WebWatcherStore:
             url TEXT NOT NULL,
             condition TEXT NOT NULL,
             cadence_rule TEXT,
+            trigger_id INTEGER,
             status TEXT NOT NULL DEFAULT 'active',
             last_snapshot_hash TEXT,
             last_snapshot_summary TEXT,
@@ -58,7 +59,16 @@ class WebWatcherStore:
         with self._lock, self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute(schema_sql)
+            self._ensure_column(conn, "trigger_id", "INTEGER")
             conn.execute(index_sql)
+
+    def _ensure_column(self, conn: sqlite3.Connection, column: str, definition: str) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(web_watchers)").fetchall()
+        }
+        if column not in columns:
+            conn.execute(f"ALTER TABLE web_watchers ADD COLUMN {column} {definition}")
 
     def insert(self, payload: Dict[str, Any]) -> int:
         with self._lock, self._connect() as conn:
