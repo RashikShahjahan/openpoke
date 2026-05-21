@@ -7,7 +7,11 @@ from typing import Any, Optional
 
 from ...logging_config import logger
 from ...services.conversation import get_conversation_log
-from ...services.execution import get_agent_roster, get_execution_agent_logs
+from ...services.execution import (
+    get_agent_roster,
+    get_agent_search_index,
+    get_execution_agent_logs,
+)
 from ..execution_agent.batch_manager import ExecutionBatchManager
 
 
@@ -55,6 +59,24 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": ["message"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_agents",
+            "description": "Search existing execution agents by semantic similarity to find the most relevant agents for a task. Returns up to 3 matching agent names.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Short description of the task or context to match against existing execution agent names.",
+                    },
+                },
+                "required": ["query"],
                 "additionalProperties": False,
             },
         },
@@ -150,6 +172,25 @@ def send_message_to_agent(agent_name: str, instructions: str) -> ToolResult:
     )
 
 
+async def search_agents(query: str) -> ToolResult:
+    """Search existing execution agents by semantic similarity."""
+
+    results = await get_agent_search_index().search_agents(query, limit=3)
+    return ToolResult(
+        success=True,
+        payload={
+            "query": query,
+            "agents": [
+                {
+                    "agent_name": result.agent_name,
+                    "score": result.score,
+                }
+                for result in results
+            ],
+        },
+    )
+
+
 # Send immediate message to user and record in conversation history
 def send_message_to_user(message: str) -> ToolResult:
     """Record a user-visible reply in the conversation log."""
@@ -215,7 +256,7 @@ def get_tool_schemas():
 
 
 # Route tool calls to appropriate handlers with argument validation and error handling
-def handle_tool_call(name: str, arguments: Any) -> ToolResult:
+async def handle_tool_call(name: str, arguments: Any) -> ToolResult:
     """Handle tool calls from interaction agent."""
     try:
         if isinstance(arguments, str):
@@ -227,6 +268,8 @@ def handle_tool_call(name: str, arguments: Any) -> ToolResult:
 
         if name == "send_message_to_agent":
             return send_message_to_agent(**args)
+        if name == "search_agents":
+            return await search_agents(**args)
         if name == "send_message_to_user":
             return send_message_to_user(**args)
         if name == "send_draft":
