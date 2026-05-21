@@ -15,6 +15,7 @@ from .roster import AgentRoster, get_agent_roster
 
 
 DEFAULT_AGENT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
+DEFAULT_AGENT_SEARCH_MIN_SCORE = 0.35
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _INDEX_PATH = _DATA_DIR / "execution_agents" / "agent_embeddings.json"
 
@@ -36,13 +37,20 @@ class AgentSearchIndex:
         *,
         roster: AgentRoster | None = None,
         embedding_model: str = DEFAULT_AGENT_EMBEDDING_MODEL,
+        min_score: float = DEFAULT_AGENT_SEARCH_MIN_SCORE,
     ) -> None:
         self._index_path = index_path
         self._roster = roster or get_agent_roster()
         self._embedding_model = embedding_model
+        self._min_score = min_score
         self._lock = threading.Lock()
 
-    async def search_agents(self, query: str, limit: int = 3) -> list[AgentSearchResult]:
+    async def search_agents(
+        self,
+        query: str,
+        limit: int = 3,
+        min_score: float | None = None,
+    ) -> list[AgentSearchResult]:
         """Return the top matching execution agents for a query."""
 
         normalized_query = query.strip()
@@ -64,14 +72,14 @@ class AgentSearchIndex:
         }
 
         query_embedding = (await self._embed_texts([normalized_query]))[0]
-        results = [
-            AgentSearchResult(
-                agent_name=name,
-                score=_cosine_similarity(query_embedding, embedding),
-            )
-            for name, embedding in embeddings.items()
-            if name in agent_name_set
-        ]
+        score_threshold = self._min_score if min_score is None else min_score
+        results: list[AgentSearchResult] = []
+        for name, embedding in embeddings.items():
+            if name not in agent_name_set:
+                continue
+            score = _cosine_similarity(query_embedding, embedding)
+            if score >= score_threshold:
+                results.append(AgentSearchResult(agent_name=name, score=score))
 
         results.sort(key=lambda result: result.score, reverse=True)
         return results[:limit]
@@ -192,5 +200,6 @@ __all__ = [
     "AgentSearchIndex",
     "AgentSearchResult",
     "DEFAULT_AGENT_EMBEDDING_MODEL",
+    "DEFAULT_AGENT_SEARCH_MIN_SCORE",
     "get_agent_search_index",
 ]

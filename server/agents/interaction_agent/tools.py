@@ -8,6 +8,7 @@ from typing import Any, Optional
 from ...logging_config import logger
 from ...services.conversation import get_conversation_log
 from ...services.execution import (
+    DEFAULT_AGENT_SEARCH_MIN_SCORE,
     get_agent_roster,
     get_agent_search_index,
     get_execution_agent_logs,
@@ -74,6 +75,10 @@ TOOL_SCHEMAS = [
                     "query": {
                         "type": "string",
                         "description": "Short description of the task or context to match against existing execution agent names.",
+                    },
+                    "min_score": {
+                        "type": "number",
+                        "description": f"Optional minimum similarity score for a match. Defaults to {DEFAULT_AGENT_SEARCH_MIN_SCORE}.",
                     },
                 },
                 "required": ["query"],
@@ -172,14 +177,22 @@ def send_message_to_agent(agent_name: str, instructions: str) -> ToolResult:
     )
 
 
-async def search_agents(query: str) -> ToolResult:
+async def search_agents(
+    query: str,
+    min_score: float = DEFAULT_AGENT_SEARCH_MIN_SCORE,
+) -> ToolResult:
     """Search existing execution agents by semantic similarity."""
 
-    results = await get_agent_search_index().search_agents(query, limit=3)
+    results = await get_agent_search_index().search_agents(
+        query,
+        limit=3,
+        min_score=min_score,
+    )
     return ToolResult(
         success=True,
         payload={
             "query": query,
+            "min_score": min_score,
             "agents": [
                 {
                     "agent_name": result.agent_name,
