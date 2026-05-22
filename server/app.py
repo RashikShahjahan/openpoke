@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .logging_config import configure_logging, logger
 from .routes import api_router
-from .services import get_important_email_watcher, get_trigger_scheduler
+from .services import get_trigger_scheduler
 
 
 # Register global exception handlers for consistent error responses across the API
@@ -66,12 +66,10 @@ app.include_router(api_router)
 
 
 @app.on_event("startup")
-# Initialize background services (trigger scheduler and email watcher) when the app starts
+# Initialize background services when the app starts
 async def _start_trigger_scheduler() -> None:
     scheduler = get_trigger_scheduler()
     await scheduler.start()
-    watcher = get_important_email_watcher()
-    await watcher.start()
 
 
 @app.on_event("shutdown")
@@ -79,8 +77,6 @@ async def _start_trigger_scheduler() -> None:
 async def _stop_trigger_scheduler() -> None:
     scheduler = get_trigger_scheduler()
     await scheduler.stop()
-    watcher = get_important_email_watcher()
-    await watcher.stop()
 
 
 __all__ = ["app"]

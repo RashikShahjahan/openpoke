@@ -64,15 +64,11 @@ class Settings(BaseModel):
     execution_agent_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
     execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
     summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
-    email_classifier_model: str = Field(default=_env_model("OPENPOKE_EMAIL_CLASSIFIER_MODEL"))
-    web_watcher_evaluator_model: str = Field(default=_env_model("OPENPOKE_WEB_WATCHER_EVALUATOR_MODEL"))
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(
         default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
     )
-    composio_gmail_auth_config_id: Optional[str] = Field(default=os.getenv("COMPOSIO_GMAIL_AUTH_CONFIG_ID"))
-    composio_api_key: Optional[str] = Field(default=os.getenv("COMPOSIO_API_KEY"))
 
     # HTTP behaviour
     cors_allow_origins_raw: str = Field(default=os.getenv("OPENPOKE_CORS_ALLOW_ORIGINS", "*"))

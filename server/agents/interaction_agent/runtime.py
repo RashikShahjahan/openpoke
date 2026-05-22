@@ -104,10 +104,6 @@ class InteractionAgentRuntime:
             transcript_before = self._load_conversation_transcript()
             self.conversation_log.record_agent_message(agent_message)
 
-            if self._is_silent_web_watcher_update(agent_message):
-                self.conversation_log.record_wait("No relevant web watcher update")
-                return InteractionResult(success=True, response="")
-
             system_prompt = build_system_prompt()
             messages = prepare_message_with_history(
                 agent_message, transcript_before, message_type="agent"
@@ -201,9 +197,6 @@ class InteractionAgentRuntime:
             if rendered.strip():
                 return rendered
         return self.conversation_log.load_transcript()
-
-    def _is_silent_web_watcher_update(self, agent_message: str) -> bool:
-        return "No relevant web watcher update" in agent_message
 
     # Execute API call to OpenRouter with system prompt, messages, and tool schemas
     async def _make_llm_call(

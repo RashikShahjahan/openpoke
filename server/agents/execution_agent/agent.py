@@ -21,7 +21,7 @@ Purpose: {agent_purpose}
 Instructions:
 [TO BE FILLED IN BY USER]
 
-You have access to Gmail tools to help complete your tasks. When given instructions:
+You have access to tools to help complete your tasks. When given instructions:
 1. Analyze what needs to be done
 2. Use the appropriate tools to complete the task
 3. Provide clear status updates on your actions
