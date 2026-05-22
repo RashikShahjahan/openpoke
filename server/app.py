@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .logging_config import configure_logging, logger
+from .messaging.gateway import get_messaging_gateway
 from .routes import api_router
 from .services import get_trigger_scheduler
 
@@ -70,11 +71,15 @@ app.include_router(api_router)
 async def _start_trigger_scheduler() -> None:
     scheduler = get_trigger_scheduler()
     await scheduler.start()
+    gateway = get_messaging_gateway()
+    await gateway.start()
 
 
 @app.on_event("shutdown")
 # Gracefully shutdown background services when the app stops
 async def _stop_trigger_scheduler() -> None:
+    gateway = get_messaging_gateway()
+    await gateway.stop()
     scheduler = get_trigger_scheduler()
     await scheduler.stop()
 

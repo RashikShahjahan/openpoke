@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from server.messaging.context import set_reply_target
 from server.messaging.types import InboundMessage, ReplyTarget
+
+
+@pytest.fixture(autouse=True)
+def reset_reply_target() -> None:
+    set_reply_target(None)
+    yield
+    set_reply_target(None)
 
 
 @pytest.fixture

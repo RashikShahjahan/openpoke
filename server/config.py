@@ -45,6 +45,13 @@ def _env_int(name: str, fallback: int) -> int:
         return fallback
 
 
+def _env_bool(name: str, fallback: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return fallback
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings(BaseModel):
     """Application settings with lightweight env fallbacks."""
 
@@ -70,6 +77,16 @@ class Settings(BaseModel):
         default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
     )
 
+    # Signal messaging integration
+    signal_enabled: bool = Field(default=_env_bool("OPENPOKE_SIGNAL_ENABLED"))
+    signal_http_url: str = Field(
+        default=os.getenv("OPENPOKE_SIGNAL_HTTP_URL", "http://127.0.0.1:8080")
+    )
+    signal_account: Optional[str] = Field(default=os.getenv("OPENPOKE_SIGNAL_ACCOUNT"))
+    signal_allowed_senders_raw: str = Field(
+        default=os.getenv("OPENPOKE_SIGNAL_ALLOWED_SENDERS", "")
+    )
+
     # HTTP behaviour
     cors_allow_origins_raw: str = Field(default=os.getenv("OPENPOKE_CORS_ALLOW_ORIGINS", "*"))
     enable_docs: bool = Field(default=os.getenv("OPENPOKE_ENABLE_DOCS", "1") != "0")
@@ -85,6 +102,15 @@ class Settings(BaseModel):
         if self.cors_allow_origins_raw.strip() in {"", "*"}:
             return ["*"]
         return [origin.strip() for origin in self.cors_allow_origins_raw.split(",") if origin.strip()]
+
+    @property
+    def signal_allowed_senders(self) -> List[str]:
+        """Parse Signal sender allowlist from comma-separated phone numbers."""
+        return [
+            sender.strip()
+            for sender in self.signal_allowed_senders_raw.split(",")
+            if sender.strip()
+        ]
 
     @property
     def resolved_docs_url(self) -> Optional[str]:
