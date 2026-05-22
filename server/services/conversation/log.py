@@ -8,6 +8,7 @@ from typing import Dict, Iterator, List, Optional, Protocol, Tuple
 
 from ...config import get_settings
 from ...logging_config import logger
+from ...messaging.context import publish_reply
 from ...models import ChatMessage
 from ...utils.timezones import now_in_user_timezone
 from typing import TYPE_CHECKING
@@ -144,6 +145,7 @@ class ConversationLog:
     def record_reply(self, content: str) -> None:
         timestamp = self._append("poke_reply", content)
         self._working_memory_log.append_entry("poke_reply", content, timestamp)
+        publish_reply(content)
 
     def record_wait(self, reason: str) -> None:
         """Record a wait marker that should not reach the user-facing chat history."""
