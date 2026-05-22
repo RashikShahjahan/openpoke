@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -47,11 +49,26 @@ def register_exception_handlers(app: FastAPI) -> None:
 configure_logging()
 _settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler = get_trigger_scheduler()
+    gateway = get_messaging_gateway()
+
+    await scheduler.start()
+    await gateway.start()
+    try:
+        yield
+    finally:
+        await gateway.stop()
+        await scheduler.stop()
+
 app = FastAPI(
     title=_settings.app_name,
     version=_settings.app_version,
     docs_url=_settings.resolved_docs_url,
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -64,24 +81,6 @@ app.add_middleware(
 
 register_exception_handlers(app)
 app.include_router(api_router)
-
-
-@app.on_event("startup")
-# Initialize background services when the app starts
-async def _start_trigger_scheduler() -> None:
-    scheduler = get_trigger_scheduler()
-    await scheduler.start()
-    gateway = get_messaging_gateway()
-    await gateway.start()
-
-
-@app.on_event("shutdown")
-# Gracefully shutdown background services when the app stops
-async def _stop_trigger_scheduler() -> None:
-    gateway = get_messaging_gateway()
-    await gateway.stop()
-    scheduler = get_trigger_scheduler()
-    await scheduler.stop()
 
 
 __all__ = ["app"]
