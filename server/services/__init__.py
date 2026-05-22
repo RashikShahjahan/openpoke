@@ -2,8 +2,10 @@
 
 from .conversation import (
     ConversationLog,
+    ConversationProcessor,
     SummaryState,
     get_conversation_log,
+    get_conversation_processor,
     get_working_memory_log,
     schedule_summarization,
 )
@@ -16,9 +18,11 @@ from .timezone_store import TimezoneStore, get_timezone_store
 
 __all__ = [
     "ConversationLog",
+    "ConversationProcessor",
     "SummaryState",
     "handle_chat_request",
     "get_conversation_log",
+    "get_conversation_processor",
     "get_working_memory_log",
     "schedule_summarization",
     "AgentRoster",

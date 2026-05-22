@@ -4,10 +4,10 @@ from typing import Optional, Union
 from fastapi import status
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from ...agents.interaction_agent.runtime import InteractionAgentRuntime
 from ...logging_config import logger
 from ...models import ChatMessage, ChatRequest
 from ...utils import error_response
+from .processor import get_conversation_processor
 
 
 # Extract the most recent user message from the chat request payload
@@ -31,8 +31,9 @@ async def handle_chat_request(payload: ChatRequest) -> Union[PlainTextResponse, 
 
     logger.info("chat request", extra={"message_length": len(user_content)})
 
+    processor = get_conversation_processor()
     try:
-        runtime = InteractionAgentRuntime()
+        runtime = processor.create_runtime()
     except ValueError as ve:
         # Missing API key error
         logger.error("configuration error", extra={"error": str(ve)})
@@ -40,7 +41,7 @@ async def handle_chat_request(payload: ChatRequest) -> Union[PlainTextResponse, 
 
     async def _run_interaction() -> None:
         try:
-            await runtime.execute(user_message=user_content)
+            await processor.process_user_message(user_content, runtime=runtime)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("chat task failed: %s", exc)
 
