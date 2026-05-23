@@ -43,11 +43,25 @@ OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15557654321,+15559876543
 
 An empty allowlist denies all inbound Signal messages.
 
+### Single-number Note to Self setup
+
+OpenPoke can run from a `signal-cli` linked device on your personal Signal number. To message OpenPoke without a second phone number, allowlist your own account number:
+
+```bash
+OPENPOKE_SIGNAL_ENABLED=1
+OPENPOKE_SIGNAL_HTTP_URL=http://127.0.0.1:8080
+OPENPOKE_SIGNAL_ACCOUNT=+15551234567
+OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15551234567
+```
+
+Then send messages to Signal's **Note to Self** conversation from your phone. OpenPoke treats those self-sent sync messages as inbound messages and replies in the same conversation.
+
 ## Behavior
 
 - OpenPoke health-checks signal-cli on startup.
 - If Signal is enabled but the daemon is unavailable, OpenPoke logs a warning and continues without Signal.
 - Allowed inbound Signal DMs are routed through the same conversation processor as web chat.
+- Allowed Note to Self messages are routed the same way, allowing a single-number setup.
 - Replies produced by `record_reply(...)`, including delayed execution-agent results, are delivered back to the originating Signal sender.
 - Existing web chat does not trigger Signal sends unless the active turn originated from Signal.
 

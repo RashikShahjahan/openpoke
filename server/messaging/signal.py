@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
@@ -35,6 +36,7 @@ class SignalAdapter:
         self._client = client
         self._owns_client = client is None
         self._running = False
+        self._sent_timestamps: deque[int] = deque(maxlen=100)
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -61,9 +63,18 @@ class SignalAdapter:
             return None
 
         sender = str(envelope.get("sourceNumber") or "").strip()
-        if not sender or sender == self.account:
+        if not sender:
             return None
         if sender not in self.allowed_senders:
+            return None
+
+        sync_message = envelope.get("syncMessage")
+        if isinstance(sync_message, dict):
+            note_to_self = self._parse_note_to_self(event, envelope, sender, sync_message)
+            if note_to_self is not None:
+                return note_to_self
+
+        if sender == self.account:
             return None
 
         data_message = envelope.get("dataMessage")
@@ -71,6 +82,31 @@ class SignalAdapter:
             return None
 
         text = str(data_message.get("message") or "").strip()
+        if not text:
+            return None
+
+        return InboundMessage(source=self.source, sender=sender, text=text, raw=event)
+
+    def _parse_note_to_self(
+        self,
+        event: dict[str, Any],
+        envelope: dict[str, Any],
+        sender: str,
+        sync_message: dict[str, Any],
+    ) -> InboundMessage | None:
+        sent_message = sync_message.get("sentMessage")
+        if sender != self.account or not isinstance(sent_message, dict):
+            return None
+
+        destination = str(sent_message.get("destinationNumber") or "").strip()
+        if destination != self.account:
+            return None
+
+        timestamp = sent_message.get("timestamp", envelope.get("timestamp"))
+        if isinstance(timestamp, int) and timestamp in self._sent_timestamps:
+            return None
+
+        text = str(sent_message.get("message") or "").strip()
         if not text:
             return None
 
@@ -92,6 +128,21 @@ class SignalAdapter:
         }
         response = await self.client.post("/api/v1/rpc", json=payload)
         response.raise_for_status()
+        self._record_send_timestamp(response)
+
+    def _record_send_timestamp(self, response: httpx.Response) -> None:
+        try:
+            payload = response.json()
+        except json.JSONDecodeError:
+            return
+
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            return
+
+        timestamp = result.get("timestamp")
+        if isinstance(timestamp, int):
+            self._sent_timestamps.append(timestamp)
 
     def dispatch_event(self, data: str) -> InboundMessage | None:
         try:

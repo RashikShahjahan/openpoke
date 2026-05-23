@@ -113,6 +113,108 @@ def test_signal_ignores_self_message() -> None:
     )
 
 
+def test_signal_parse_note_to_self_sync_message() -> None:
+    adapter = SignalAdapter(
+        account="+100",
+        base_url="http://signal.local",
+        allowed_senders={"+100"},
+    )
+    event = {
+        "envelope": {
+            "sourceNumber": "+100",
+            "syncMessage": {
+                "sentMessage": {
+                    "destinationNumber": "+100",
+                    "message": "hello openpoke",
+                    "timestamp": 123,
+                }
+            },
+        }
+    }
+
+    assert adapter.parse_event(event) == InboundMessage(
+        source="signal",
+        sender="+100",
+        text="hello openpoke",
+        raw=event,
+    )
+
+
+def test_signal_note_to_self_requires_allowlist() -> None:
+    adapter = SignalAdapter(
+        account="+100",
+        base_url="http://signal.local",
+        allowed_senders={"+200"},
+    )
+
+    assert (
+        adapter.parse_event(
+            {
+                "envelope": {
+                    "sourceNumber": "+100",
+                    "syncMessage": {
+                        "sentMessage": {
+                            "destinationNumber": "+100",
+                            "message": "blocked",
+                        }
+                    },
+                }
+            }
+        )
+        is None
+    )
+
+
+def test_signal_note_to_self_requires_self_destination() -> None:
+    adapter = SignalAdapter(
+        account="+100",
+        base_url="http://signal.local",
+        allowed_senders={"+100"},
+    )
+
+    assert (
+        adapter.parse_event(
+            {
+                "envelope": {
+                    "sourceNumber": "+100",
+                    "syncMessage": {
+                        "sentMessage": {
+                            "destinationNumber": "+200",
+                            "message": "not note to self",
+                        }
+                    },
+                }
+            }
+        )
+        is None
+    )
+
+
+def test_signal_note_to_self_ignores_empty_message() -> None:
+    adapter = SignalAdapter(
+        account="+100",
+        base_url="http://signal.local",
+        allowed_senders={"+100"},
+    )
+
+    assert (
+        adapter.parse_event(
+            {
+                "envelope": {
+                    "sourceNumber": "+100",
+                    "syncMessage": {
+                        "sentMessage": {
+                            "destinationNumber": "+100",
+                            "message": "",
+                        }
+                    },
+                }
+            }
+        )
+        is None
+    )
+
+
 def test_signal_rejects_sender_not_in_allowlist() -> None:
     adapter = SignalAdapter(
         account="+100",
@@ -186,6 +288,43 @@ def test_signal_send_uses_json_rpc_send() -> None:
         },
         "id": 1,
     }
+
+
+def test_signal_ignores_note_to_self_echo_after_send() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"result": {"timestamp": 123}})
+
+    async def run_test() -> SignalAdapter:
+        async with _client(handler) as client:
+            adapter = SignalAdapter(
+                account="+100",
+                base_url="http://signal.local",
+                allowed_senders={"+100"},
+                client=client,
+            )
+
+            await adapter.send(ReplyTarget(source="signal", destination="+100"), "hi")
+            return adapter
+
+    adapter = asyncio.run(run_test())
+
+    assert (
+        adapter.parse_event(
+            {
+                "envelope": {
+                    "sourceNumber": "+100",
+                    "syncMessage": {
+                        "sentMessage": {
+                            "destinationNumber": "+100",
+                            "message": "hi",
+                            "timestamp": 123,
+                        }
+                    },
+                }
+            }
+        )
+        is None
+    )
 
 
 def test_signal_sse_event_dispatches_inbound_message() -> None:
