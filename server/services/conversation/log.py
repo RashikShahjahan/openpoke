@@ -9,7 +9,6 @@ from typing import Dict, Iterator, List, Optional, Protocol, Tuple
 from ...config import get_settings
 from ...logging_config import logger
 from ...messaging.context import publish_reply
-from ...models import ChatMessage
 from ...utils.timezones import now_in_user_timezone
 from typing import TYPE_CHECKING
 
@@ -173,25 +172,6 @@ class ConversationLog:
                 "failed to schedule summarization",
                 extra={"error": str(exc)},
             )
-
-    def to_chat_messages(self) -> List[ChatMessage]:
-        messages: List[ChatMessage] = []
-        for tag, timestamp, payload in self.iter_entries():
-            normalized_timestamp = timestamp or None
-            if tag == "user_message":
-                messages.append(
-                    ChatMessage(role="user", content=payload, timestamp=normalized_timestamp)
-                )
-            elif tag == "poke_reply":
-                messages.append(
-                    ChatMessage(
-                        role="assistant", content=payload, timestamp=normalized_timestamp
-                    )
-                )
-            elif tag == "wait":
-                # Wait markers are orchestration metadata and must not surface to the user
-                continue
-        return messages
 
     def clear(self) -> None:
         with self._lock:

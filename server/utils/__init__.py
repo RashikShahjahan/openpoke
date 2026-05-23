@@ -1,4 +1,3 @@
-from .responses import error_response
 from .timezones import (
     UTC,
     convert_to_user_timezone,
@@ -8,7 +7,6 @@ from .timezones import (
 )
 
 __all__ = [
-    "error_response",
     "UTC",
     "convert_to_user_timezone",
     "get_user_timezone_name",

@@ -91,39 +91,3 @@ class TestRecordReplyPublishing:
         log.record_agent_message("Hello from agent")
 
         assert subscriber == []
-
-
-class TestWebChatUnchanged:
-    def test_to_chat_messages_still_reads_recorded_replies(
-        self, log: ConversationLog
-    ) -> None:
-        log.record_user_message("User text")
-        log.record_reply("Reply text")
-        log.record_user_message("More user text")
-        log.record_reply("More reply text")
-
-        messages = log.to_chat_messages()
-
-        assert len(messages) == 4
-        assert messages[0].role == "user"
-        assert messages[0].content == "User text"
-        assert messages[1].role == "assistant"
-        assert messages[1].content == "Reply text"
-        assert messages[2].role == "user"
-        assert messages[2].content == "More user text"
-        assert messages[3].role == "assistant"
-        assert messages[3].content == "More reply text"
-
-    def test_wait_entries_excluded_from_chat_history(
-        self, log: ConversationLog
-    ) -> None:
-        log.record_user_message("User text")
-        log.record_wait("Already replied")
-        log.record_reply("Reply text after wait")
-
-        messages = log.to_chat_messages()
-
-        assert len(messages) == 2
-        assert messages[0].role == "user"
-        assert messages[1].role == "assistant"
-        assert messages[1].content == "Reply text after wait"

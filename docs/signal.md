@@ -7,7 +7,7 @@ Signal support is disabled by default. V1 supports text-only direct messages: no
 ## Requirements
 
 - `signal-cli` installed and linked to a Signal account
-- OpenPoke server running normally
+- OpenPoke messaging daemon running normally
 - Signal sender allowlist configured explicitly
 
 ## Start signal-cli
@@ -42,6 +42,16 @@ OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15557654321,+15559876543
 ```
 
 An empty allowlist denies all inbound Signal messages.
+
+## Start OpenPoke
+
+Run the messaging-only daemon:
+
+```bash
+python -m server.server --require-signal
+```
+
+Omit `--require-signal` if you want the process to stay up even when Signal is disabled.
 
 ### Single-number Note to Self setup
 
@@ -83,10 +93,10 @@ Replace `+15551234567` with `OPENPOKE_SIGNAL_ACCOUNT`. This command only filters
 
 - OpenPoke health-checks signal-cli on startup.
 - If Signal is enabled but the daemon is unavailable, OpenPoke logs a warning and continues without Signal.
-- Allowed inbound Signal DMs are routed through the same conversation processor as web chat.
+- Allowed inbound Signal DMs are routed through the shared conversation processor.
 - Allowed Note to Self messages are routed the same way, allowing a single-number setup.
 - Replies produced by `record_reply(...)`, including delayed execution-agent results, are delivered back to the originating Signal sender.
-- Existing web chat does not trigger Signal sends unless the active turn originated from Signal.
+- Replies are sent to Signal only when the active turn originated from Signal.
 
 ## Environment Variables
 

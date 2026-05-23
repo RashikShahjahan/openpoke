@@ -28,21 +28,12 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
-DEFAULT_APP_NAME = "OpenPoke Server"
-DEFAULT_APP_VERSION = "0.3.0"
 DEFAULT_LLM_API_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_CHAT_MODEL = "openrouter/free"
 
 
 def _env_model(name: str) -> str:
     return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL") or DEFAULT_OPENROUTER_CHAT_MODEL
-
-
-def _env_int(name: str, fallback: int) -> int:
-    try:
-        return int(os.getenv(name, str(fallback)))
-    except (TypeError, ValueError):
-        return fallback
 
 
 def _env_bool(name: str, fallback: bool = False) -> bool:
@@ -54,14 +45,6 @@ def _env_bool(name: str, fallback: bool = False) -> bool:
 
 class Settings(BaseModel):
     """Application settings with lightweight env fallbacks."""
-
-    # App metadata
-    app_name: str = Field(default=DEFAULT_APP_NAME)
-    app_version: str = Field(default=DEFAULT_APP_VERSION)
-
-    # Server runtime
-    server_host: str = Field(default=os.getenv("OPENPOKE_HOST", "0.0.0.0"))
-    server_port: int = Field(default=_env_int("OPENPOKE_PORT", 8001))
 
     # LLM API and model selection
     llm_api_base_url: str = Field(
@@ -87,21 +70,9 @@ class Settings(BaseModel):
         default=os.getenv("OPENPOKE_SIGNAL_ALLOWED_SENDERS", "")
     )
 
-    # HTTP behaviour
-    cors_allow_origins_raw: str = Field(default=os.getenv("OPENPOKE_CORS_ALLOW_ORIGINS", "*"))
-    enable_docs: bool = Field(default=os.getenv("OPENPOKE_ENABLE_DOCS", "1") != "0")
-    docs_url: Optional[str] = Field(default=os.getenv("OPENPOKE_DOCS_URL", "/docs"))
-
     # Summarisation controls
     conversation_summary_threshold: int = Field(default=100)
     conversation_summary_tail_size: int = Field(default=10)
-
-    @property
-    def cors_allow_origins(self) -> List[str]:
-        """Parse CORS origins from comma-separated string."""
-        if self.cors_allow_origins_raw.strip() in {"", "*"}:
-            return ["*"]
-        return [origin.strip() for origin in self.cors_allow_origins_raw.split(",") if origin.strip()]
 
     @property
     def signal_allowed_senders(self) -> List[str]:
@@ -111,11 +82,6 @@ class Settings(BaseModel):
             for sender in self.signal_allowed_senders_raw.split(",")
             if sender.strip()
         ]
-
-    @property
-    def resolved_docs_url(self) -> Optional[str]:
-        """Return documentation URL when docs are enabled."""
-        return (self.docs_url or "/docs") if self.enable_docs else None
 
     @property
     def summarization_enabled(self) -> bool:

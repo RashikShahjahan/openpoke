@@ -9,7 +9,6 @@ from .conversation import (
     get_working_memory_log,
     schedule_summarization,
 )
-from .conversation.chat_handler import handle_chat_request
 from .execution import AgentRoster, ExecutionAgentLogStore, get_agent_roster, get_execution_agent_logs
 from .trigger_scheduler import get_trigger_scheduler
 from .triggers import get_trigger_service
@@ -20,7 +19,6 @@ __all__ = [
     "ConversationLog",
     "ConversationProcessor",
     "SummaryState",
-    "handle_chat_request",
     "get_conversation_log",
     "get_conversation_processor",
     "get_working_memory_log",

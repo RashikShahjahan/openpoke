@@ -1,52 +1,59 @@
 #!/usr/bin/env python3
-"""CLI entrypoint for running the FastAPI app with Uvicorn."""
+"""CLI entrypoint for running OpenPoke as a messaging-only daemon."""
+
+from __future__ import annotations
 
 import argparse
-import logging
+import asyncio
+import signal
 
-import uvicorn
-
-from .app import app
 from .config import get_settings
+from .logging_config import configure_logging, logger
+from .messaging.gateway import get_messaging_gateway
+from .services import get_trigger_scheduler
+
+
+async def run_daemon() -> None:
+    """Run background services until interrupted."""
+
+    scheduler = get_trigger_scheduler()
+    gateway = get_messaging_gateway()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def request_shutdown() -> None:
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, request_shutdown)
+
+    await scheduler.start()
+    await gateway.start()
+    logger.info("OpenPoke messaging daemon started")
+
+    try:
+        await stop_event.wait()
+    finally:
+        logger.info("OpenPoke messaging daemon stopping")
+        await gateway.stop()
+        await scheduler.stop()
 
 
 def main() -> None:
     settings = get_settings()
-    default_host = settings.server_host
-    default_port = settings.server_port
-
-    parser = argparse.ArgumentParser(description="OpenPoke FastAPI server")
-    parser.add_argument("--host", default=default_host, help=f"Host to bind (default: {default_host})")
-    parser.add_argument("--port", type=int, default=default_port, help=f"Port to bind (default: {default_port})")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser = argparse.ArgumentParser(description="OpenPoke messaging daemon")
+    parser.add_argument(
+        "--require-signal",
+        action="store_true",
+        help="Exit if Signal support is not enabled in configuration",
+    )
     args = parser.parse_args()
 
-    # Reduce uvicorn access log noise - only show warnings and errors
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn").setLevel(logging.INFO)
-    # Reduce watchfiles noise during development
-    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
-    
-    if args.reload:
-        # For reload mode, use import string
-        uvicorn.run(
-            "server.app:app",
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level="info",
-            access_log=False,  # Disable access logs completely for cleaner output
-        )
-    else:
-        # For production mode, use app object directly
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level="info",
-            access_log=False,  # Disable access logs completely for cleaner output
-        )
+    configure_logging()
+    if args.require_signal and not settings.signal_enabled:
+        raise SystemExit("Signal support is disabled. Set OPENPOKE_SIGNAL_ENABLED=1.")
+
+    asyncio.run(run_daemon())
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI invocation guard
