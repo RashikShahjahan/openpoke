@@ -29,7 +29,6 @@ curl http://127.0.0.1:8080/api/v1/check
 Add these values to `.env`:
 
 ```bash
-OPENPOKE_SIGNAL_ENABLED=1
 OPENPOKE_SIGNAL_HTTP_URL=http://127.0.0.1:8080
 OPENPOKE_SIGNAL_ACCOUNT=+15551234567
 OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15557654321
@@ -58,7 +57,6 @@ Omit `--require-signal` if you want the process to stay up even when Signal is d
 OpenPoke can run from a `signal-cli` linked device on your personal Signal number. To message OpenPoke without a second phone number, allowlist your own account number:
 
 ```bash
-OPENPOKE_SIGNAL_ENABLED=1
 OPENPOKE_SIGNAL_HTTP_URL=http://127.0.0.1:8080
 OPENPOKE_SIGNAL_ACCOUNT=+15551234567
 OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15551234567
@@ -102,7 +100,6 @@ Replace `+15551234567` with `OPENPOKE_SIGNAL_ACCOUNT`. This command only filters
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `OPENPOKE_SIGNAL_ENABLED` | `0` | Enable Signal integration when set to `1`, `true`, `yes`, or `on` |
 | `OPENPOKE_SIGNAL_HTTP_URL` | `http://127.0.0.1:8080` | Base URL for the signal-cli direct HTTP daemon |
 | `OPENPOKE_SIGNAL_ACCOUNT` | unset | Signal account phone number used by signal-cli |
 | `OPENPOKE_SIGNAL_ALLOWED_SENDERS` | empty | Comma-separated allowlist of sender phone numbers |

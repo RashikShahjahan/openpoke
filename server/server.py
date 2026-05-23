@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import signal
 
-from .config import get_settings
 from .logging_config import configure_logging, logger
 from .messaging.gateway import get_messaging_gateway
 from .services import get_trigger_scheduler
@@ -40,18 +38,8 @@ async def run_daemon() -> None:
 
 
 def main() -> None:
-    settings = get_settings()
-    parser = argparse.ArgumentParser(description="OpenPoke messaging daemon")
-    parser.add_argument(
-        "--require-signal",
-        action="store_true",
-        help="Exit if Signal support is not enabled in configuration",
-    )
-    args = parser.parse_args()
-
     configure_logging()
-    if args.require_signal and not settings.signal_enabled:
-        raise SystemExit("Signal support is disabled. Set OPENPOKE_SIGNAL_ENABLED=1.")
+
 
     asyncio.run(run_daemon())
 

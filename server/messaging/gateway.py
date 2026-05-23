@@ -75,11 +75,10 @@ def create_messaging_gateway(settings: Optional[Settings] = None) -> MessagingGa
     settings = settings or get_settings()
     signal_adapter: Optional[SignalAdapter] = None
 
-    if settings.signal_enabled:
-        if not settings.signal_account:
-            logger.warning("Signal messaging enabled without OPENPOKE_SIGNAL_ACCOUNT")
-        else:
-            signal_adapter = SignalAdapter(
+    if not settings.signal_account:
+        logger.warning("Signal messaging enabled without OPENPOKE_SIGNAL_ACCOUNT")
+    else:
+        signal_adapter = SignalAdapter(
                 account=settings.signal_account,
                 base_url=settings.signal_http_url,
                 allowed_senders=set(settings.signal_allowed_senders),

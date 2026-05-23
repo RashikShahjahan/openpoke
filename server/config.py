@@ -61,7 +61,6 @@ class Settings(BaseModel):
     )
 
     # Signal messaging integration
-    signal_enabled: bool = Field(default=_env_bool("OPENPOKE_SIGNAL_ENABLED"))
     signal_http_url: str = Field(
         default=os.getenv("OPENPOKE_SIGNAL_HTTP_URL", "http://127.0.0.1:8080")
     )
