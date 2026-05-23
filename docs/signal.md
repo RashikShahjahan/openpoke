@@ -56,6 +56,29 @@ OPENPOKE_SIGNAL_ALLOWED_SENDERS=+15551234567
 
 Then send messages to Signal's **Note to Self** conversation from your phone. OpenPoke treats those self-sent sync messages as inbound messages and replies in the same conversation.
 
+### Watch only Note to Self with signal-cli
+
+For local debugging, you can run `signal-cli receive` directly and filter the JSON stream to only show Note to Self messages for the configured account:
+
+```bash
+signal-cli -a +15551234567 -o json receive --timeout -1 --ignore-stories \
+  | jq -rc --arg self +15551234567 '
+      select(
+        (.envelope.sourceNumber? == $self and (.envelope.dataMessage? != null))
+        or (.envelope.syncMessage.sentMessage.destination? == $self)
+        or ((.envelope.syncMessage.sentMessage.recipients? // []) | index($self))
+      )
+      | {
+          timestamp: (.envelope.timestamp? // .envelope.syncMessage.sentMessage.timestamp?),
+          source: .envelope.sourceNumber?,
+          message: (.envelope.dataMessage.message? // .envelope.syncMessage.sentMessage.message?),
+          raw: .
+        }
+    '
+```
+
+Replace `+15551234567` with `OPENPOKE_SIGNAL_ACCOUNT`. This command only filters the local output; `signal-cli receive` still receives all pending account messages from Signal.
+
 ## Behavior
 
 - OpenPoke health-checks signal-cli on startup.
