@@ -1,33 +1,14 @@
 """Execution Agent implementation."""
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 from ...services.execution import get_execution_agent_logs
-from ...logging_config import logger
 
 
 # Load system prompt template from file
 _prompt_path = Path(__file__).parent / "system_prompt.md"
-if _prompt_path.exists():
-    SYSTEM_PROMPT_TEMPLATE = _prompt_path.read_text(encoding="utf-8").strip()
-else:
-    # Placeholder template - you'll replace this with actual instructions
-    SYSTEM_PROMPT_TEMPLATE = """You are an execution agent responsible for completing specific tasks using available tools.
-
-Agent Name: {agent_name}
-Purpose: {agent_purpose}
-
-Instructions:
-[TO BE FILLED IN BY USER]
-
-You have access to tools to help complete your tasks. When given instructions:
-1. Analyze what needs to be done
-2. Use the appropriate tools to complete the task
-3. Provide clear status updates on your actions
-
-Be thorough, accurate, and efficient in your execution."""
-
+SYSTEM_PROMPT_TEMPLATE = _prompt_path.read_text(encoding="utf-8").strip()
 
 class ExecutionAgent:
     """Manages state and history for an execution agent."""
