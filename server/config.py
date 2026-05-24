@@ -54,10 +54,19 @@ class Settings(BaseModel):
     execution_agent_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
     execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
     summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
+    embeddings_api_base_url: str = Field(
+        default=os.getenv("OPENPOKE_EMBEDDINGS_BASE_URL")
+        or os.getenv("OPENPOKE_LLM_BASE_URL", DEFAULT_LLM_API_BASE_URL)
+    )
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(
         default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
+    )
+    embeddings_api_key: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EMBEDDINGS_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("OPENPOKE_LLM_API_KEY")
     )
 
     # Signal messaging integration
