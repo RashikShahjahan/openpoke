@@ -9,6 +9,7 @@ from .conversation import (
     get_working_memory_log,
     schedule_summarization,
 )
+from .calendar import CalendarEvent, LocalIcsCalendarService, get_calendar_service
 from .execution import AgentRoster, ExecutionAgentLogStore, get_agent_roster, get_execution_agent_logs
 from .trigger_scheduler import get_trigger_scheduler
 from .triggers import get_trigger_service
@@ -23,6 +24,9 @@ __all__ = [
     "get_conversation_processor",
     "get_working_memory_log",
     "schedule_summarization",
+    "CalendarEvent",
+    "LocalIcsCalendarService",
+    "get_calendar_service",
     "AgentRoster",
     "ExecutionAgentLogStore",
     "get_agent_roster",
