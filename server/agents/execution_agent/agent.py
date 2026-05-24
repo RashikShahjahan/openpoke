@@ -99,6 +99,15 @@ class ExecutionAgent:
     # Log tool invocation and results with truncated content for readability
     def record_tool_execution(self, tool_name: str, arguments: str, result: str) -> None:
         """Record tool execution details."""
+        if tool_name in {
+            "calendarConnectionStatus",
+            "listCalendarEvents",
+            "getCalendarAvailability",
+        }:
+            self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")
+            self._log_store.record_tool_response(self.name, tool_name, "<calendar result redacted>")
+            return
+
         self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")
         # Record the tool response
         self._log_store.record_tool_response(self.name, tool_name, result[:500])

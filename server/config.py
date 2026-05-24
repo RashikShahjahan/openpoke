@@ -69,6 +69,12 @@ class Settings(BaseModel):
         default=os.getenv("OPENPOKE_SIGNAL_ALLOWED_SENDERS", "")
     )
 
+    # Local read-only calendar integration
+    calendar_ics_path: Optional[str] = Field(default=os.getenv("OPENPOKE_CALENDAR_ICS_PATH"))
+    calendar_refresh_seconds: int = Field(
+        default=int(os.getenv("OPENPOKE_CALENDAR_REFRESH_SECONDS", "60"))
+    )
+
     # Summarisation controls
     conversation_summary_threshold: int = Field(default=100)
     conversation_summary_tail_size: int = Field(default=10)
