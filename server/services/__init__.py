@@ -11,9 +11,16 @@ from .conversation import (
 )
 from .calendar import CalendarEvent, LocalIcsCalendarService, get_calendar_service
 from .execution import AgentRoster, ExecutionAgentLogStore, get_agent_roster, get_execution_agent_logs
-from .trigger_scheduler import get_trigger_scheduler
 from .triggers import get_trigger_service
 from .timezone_store import TimezoneStore, get_timezone_store
+
+
+def get_trigger_scheduler():
+    """Return the trigger scheduler without importing execution agents at package load."""
+
+    from .trigger_scheduler import get_trigger_scheduler as _get_trigger_scheduler
+
+    return _get_trigger_scheduler()
 
 
 __all__ = [
