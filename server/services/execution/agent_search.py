@@ -1,136 +1,155 @@
-"""Vector search over execution agent names."""
+"""Vector search over SQLite-backed execution agents."""
 
 from __future__ import annotations
 
 import importlib.resources
 import struct
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from ...logging_config import logger
 from ...openrouter_client import request_embeddings
-from .roster import AgentRoster, get_agent_roster
+from .roster import AgentRecord, AgentRoster, DEFAULT_AGENT_DB_PATH, get_agent_roster
 
 
 DEFAULT_AGENT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
-DEFAULT_AGENT_SEARCH_MIN_SCORE = 0.35
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-_INDEX_PATH = _DATA_DIR / "execution_agents" / "agent_embeddings.sqlite3"
 _TABLE_NAME = "agent_embeddings"
 _EMBEDDING_COLUMN = "embedding"
 
 
-@dataclass(frozen=True)
-class AgentSearchResult:
-    """A matching execution agent name and similarity score."""
-
-    agent_name: str
-    score: float
-
-
 class AgentSearchIndex:
-    """Caches agent name embeddings in SQLite and ranks agents with sqlite-vector."""
+    """Caches agent embeddings in SQLite and ranks agents with sqlite-vector."""
 
     def __init__(
         self,
-        index_path: Path,
+        db_path: Path = DEFAULT_AGENT_DB_PATH,
         *,
         roster: AgentRoster | None = None,
         embedding_model: str = DEFAULT_AGENT_EMBEDDING_MODEL,
-        min_score: float = DEFAULT_AGENT_SEARCH_MIN_SCORE,
     ) -> None:
-        self._index_path = index_path
+        self._db_path = db_path
         self._roster = roster or get_agent_roster()
         self._embedding_model = embedding_model
-        self._min_score = min_score
         self._lock = threading.Lock()
 
-    async def search_agents(
+    async def vector_search_agents(
         self,
         query: str,
-        limit: int = 3,
-        min_score: float | None = None,
-    ) -> list[AgentSearchResult]:
-        """Return the top matching execution agents for a query."""
+        *,
+        limit: int = 5,
+        agent_ids: Sequence[int] | None = None,
+    ) -> list[AgentRecord]:
+        """Return agents ranked by semantic similarity to the query."""
 
         normalized_query = query.strip()
         if not normalized_query or limit <= 0:
             return []
 
-        self._roster.load()
-        agent_names = self._roster.get_agents()
-        if not agent_names:
+        candidates = self._candidate_records(agent_ids)
+        if not candidates:
             return []
 
+        await self._ensure_embeddings(candidates)
         query_embedding = (await self._embed_texts([normalized_query]))[0]
         query_blob = _embedding_to_blob(query_embedding)
-        score_threshold = self._min_score if min_score is None else min_score
-        self._sync_roster(agent_names)
+        candidate_ids = [record.id for record in candidates]
+        scan_limit = max(1, self._embedding_count(), len(candidate_ids))
 
         with self._lock:
             try:
                 conn = self._connect()
                 try:
                     self._initialize_vector(conn, len(query_embedding))
-                    rows = list(conn.execute(
-                        f"""
-                        SELECT e.name, v.distance
-                        FROM vector_full_scan(?, ?, vector_as_f32(?, ?), ?) AS v
-                        JOIN {_TABLE_NAME} AS e ON e.rowid = v.rowid
-                        WHERE e.model = ?
-                        """,
-                        (
-                            _TABLE_NAME,
-                            _EMBEDDING_COLUMN,
-                            query_blob,
-                            len(query_embedding),
-                            limit,
-                            self._embedding_model,
-                        ),
-                    ))
+                    placeholders = ",".join("?" for _ in candidate_ids)
+                    rows = list(
+                        conn.execute(
+                            f"""
+                            SELECT e.agent_id, v.distance
+                            FROM vector_full_scan(?, ?, vector_as_f32(?, ?), ?) AS v
+                            JOIN {_TABLE_NAME} AS e ON e.rowid = v.rowid
+                            JOIN agents AS a ON a.id = e.agent_id
+                            WHERE e.model = ?
+                              AND a.status = 'active'
+                              AND e.agent_id IN ({placeholders})
+                            """,
+                            (
+                                _TABLE_NAME,
+                                _EMBEDDING_COLUMN,
+                                query_blob,
+                                len(query_embedding),
+                                scan_limit,
+                                self._embedding_model,
+                                *candidate_ids,
+                            ),
+                        )
+                    )
                 finally:
                     conn.close()
             except Exception as exc:
-                logger.warning(f"Failed to search agent embeddings with sqlite-vector: {exc}")
+                logger.warning("Failed to search agent embeddings", extra={"error": str(exc)})
                 return []
 
-        results = []
-        for name, distance in rows:
-            score = 1.0 - float(distance)
-            if score >= score_threshold:
-                results.append(AgentSearchResult(agent_name=str(name), score=score))
-        results.sort(key=lambda result: result.score, reverse=True)
-        return results
+        records_by_id = {record.id: record for record in candidates}
+        ordered: list[AgentRecord] = []
+        for agent_id, _distance in sorted(rows, key=lambda row: float(row[1])):
+            record = records_by_id.get(int(agent_id))
+            if record is not None:
+                ordered.append(record)
+            if len(ordered) >= limit:
+                break
+        return ordered
 
-    async def ensure_agent_embedding(self, agent_name: str) -> bool:
+    async def ensure_agent_embedding(self, agent_id: int) -> bool:
         """Create and cache an embedding for an existing agent if missing."""
 
-        normalized_name = agent_name.strip()
-        if not normalized_name:
+        record = self._roster.get_agent(agent_id)
+        if record is None or record.status != "active":
+            return False
+        if self._has_embedding(record.id):
             return False
 
-        self._roster.load()
-        agent_names = self._roster.get_agents()
-        if normalized_name not in agent_names:
-            return False
-
-        self._sync_roster(agent_names)
-        if self._has_embedding(normalized_name):
-            return False
-
-        embedding = (await self._embed_texts([normalized_name]))[0]
-        self._save_embedding(normalized_name, embedding)
+        embedding = (await self._embed_texts([_embedding_text(record)]))[0]
+        self._save_embeddings([(record.id, embedding)])
         return True
+
+    def _candidate_records(self, agent_ids: Sequence[int] | None) -> list[AgentRecord]:
+        self._roster.load()
+        if agent_ids is None:
+            return self._roster.list_agents(status="active")
+
+        records: list[AgentRecord] = []
+        seen: set[int] = set()
+        for raw_id in agent_ids:
+            try:
+                agent_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if agent_id in seen:
+                continue
+            seen.add(agent_id)
+            record = self._roster.get_agent(agent_id)
+            if record is not None and record.status == "active":
+                records.append(record)
+        return records
+
+    async def _ensure_embeddings(self, records: Sequence[AgentRecord]) -> None:
+        missing = [record for record in records if not self._has_embedding(record.id)]
+        if not missing:
+            return
+
+        embeddings = await self._embed_texts([_embedding_text(record) for record in missing])
+        self._save_embeddings(
+            (record.id, embedding) for record, embedding in zip(missing, embeddings)
+        )
 
     def _connect(self) -> Any:
         """Open SQLite and load sqlite-vector for this connection."""
 
         import apsw
 
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = apsw.Connection(str(self._index_path))
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = apsw.Connection(str(self._db_path))
         conn.setbusytimeout(30_000)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -155,15 +174,20 @@ class AgentSearchIndex:
             f"""
             CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
                 id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
+                agent_id INTEGER NOT NULL UNIQUE,
                 model TEXT NOT NULL,
                 dimension INTEGER NOT NULL,
-                embedding BLOB NOT NULL
+                embedding BLOB NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
             )
             """
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_TABLE_NAME}_model ON {_TABLE_NAME}(model)"
+        )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_TABLE_NAME}_agent_id ON {_TABLE_NAME}(agent_id)"
         )
 
     def _initialize_vector(self, conn: Any, dimension: int) -> None:
@@ -176,47 +200,45 @@ class AgentSearchIndex:
             ),
         )
 
-    def _sync_roster(self, valid_agent_names: Sequence[str]) -> None:
-        """Keep the SQLite index scoped to the active roster and embedding model."""
-
+    def _has_embedding(self, agent_id: int) -> bool:
         with self._lock:
             try:
                 conn = self._connect()
                 try:
-                    names = list(valid_agent_names)
-                    if names:
-                        placeholders = ",".join("?" for _ in names)
+                    row = next(
                         conn.execute(
-                            f"DELETE FROM {_TABLE_NAME} WHERE model != ? OR name NOT IN ({placeholders})",
-                            (self._embedding_model, *names),
-                        )
-                    else:
-                        conn.execute(f"DELETE FROM {_TABLE_NAME}")
-                finally:
-                    conn.close()
-            except Exception as exc:
-                logger.warning(f"Failed to sync agent embedding index: {exc}")
-
-    def _has_embedding(self, agent_name: str) -> bool:
-        with self._lock:
-            try:
-                conn = self._connect()
-                try:
-                    row = next(conn.execute(
-                        f"SELECT 1 FROM {_TABLE_NAME} WHERE name = ? AND model = ? LIMIT 1",
-                        (agent_name, self._embedding_model),
-                    ), None)
+                            f"SELECT 1 FROM {_TABLE_NAME} WHERE agent_id = ? AND model = ? LIMIT 1",
+                            (agent_id, self._embedding_model),
+                        ),
+                        None,
+                    )
                     return row is not None
                 finally:
                     conn.close()
             except Exception as exc:
-                logger.warning(f"Failed to check agent embedding index: {exc}")
+                logger.warning("Failed to check agent embedding", extra={"error": str(exc)})
                 return False
 
-    def _save_embedding(self, agent_name: str, embedding: Sequence[float]) -> None:
-        self._save_embeddings([(agent_name, embedding)])
+    def _embedding_count(self) -> int:
+        with self._lock:
+            try:
+                conn = self._connect()
+                try:
+                    row = next(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM {_TABLE_NAME} WHERE model = ?",
+                            (self._embedding_model,),
+                        ),
+                        None,
+                    )
+                    return int(row[0]) if row is not None else 0
+                finally:
+                    conn.close()
+            except Exception as exc:
+                logger.warning("Failed to count agent embeddings", extra={"error": str(exc)})
+                return 0
 
-    def _save_embeddings(self, embeddings: Iterable[tuple[str, Sequence[float]]]) -> None:
+    def _save_embeddings(self, embeddings: Iterable[tuple[int, Sequence[float]]]) -> None:
         embeddings = list(embeddings)
         if not embeddings:
             return
@@ -227,21 +249,22 @@ class AgentSearchIndex:
                 try:
                     dimension = len(embeddings[0][1])
                     self._initialize_vector(conn, dimension)
-                    for agent_name, embedding in embeddings:
+                    for agent_id, embedding in embeddings:
                         embedding_dimension = len(embedding)
                         if embedding_dimension != dimension:
                             raise ValueError("Embedding dimensions did not match")
                         conn.execute(
                             f"""
-                            INSERT INTO {_TABLE_NAME}(name, model, dimension, embedding)
-                            VALUES (?, ?, ?, vector_as_f32(?, ?))
-                            ON CONFLICT(name) DO UPDATE SET
+                            INSERT INTO {_TABLE_NAME}(agent_id, model, dimension, embedding, updated_at)
+                            VALUES (?, ?, ?, vector_as_f32(?, ?), CURRENT_TIMESTAMP)
+                            ON CONFLICT(agent_id) DO UPDATE SET
                                 model = excluded.model,
                                 dimension = excluded.dimension,
-                                embedding = excluded.embedding
+                                embedding = excluded.embedding,
+                                updated_at = excluded.updated_at
                             """,
                             (
-                                agent_name,
+                                agent_id,
                                 self._embedding_model,
                                 embedding_dimension,
                                 _embedding_to_blob(embedding),
@@ -252,7 +275,7 @@ class AgentSearchIndex:
                 finally:
                     conn.close()
             except Exception as exc:
-                logger.warning(f"Failed to save agent embedding index: {exc}")
+                logger.warning("Failed to save agent embeddings", extra={"error": str(exc)})
 
     async def _embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed one or more texts using OpenRouter."""
@@ -284,23 +307,27 @@ class AgentSearchIndex:
             raise ValueError("Embedding response did not include all requested inputs")
         return embeddings
 
+
+def _embedding_text(record: AgentRecord) -> str:
+    return f"{record.name}\nType: {record.agent_type}\nSearch text: {record.search_text}"
+
+
 def _embedding_to_blob(embedding: Sequence[float]) -> bytes:
     return struct.pack(f"<{len(embedding)}f", *embedding)
 
 
-_agent_search_index = AgentSearchIndex(_INDEX_PATH)
+_agent_search_index = AgentSearchIndex(DEFAULT_AGENT_DB_PATH)
 
 
 def get_agent_search_index() -> AgentSearchIndex:
-    """Get the singleton agent search index."""
+    """Get the singleton agent vector search index."""
 
     return _agent_search_index
 
 
+
 __all__ = [
     "AgentSearchIndex",
-    "AgentSearchResult",
     "DEFAULT_AGENT_EMBEDDING_MODEL",
-    "DEFAULT_AGENT_SEARCH_MIN_SCORE",
     "get_agent_search_index",
 ]

@@ -6,13 +6,14 @@ IMPORTANT: **Always check the conversation history and use the wait tool if nece
 
 TOOLS
 
-Search Agents Tool Usage
+Agent Roster Tool Usage
 
-- `search_agents(query)` finds relevant existing execution agents and returns up to 3 exact agent names.
-- Use this before `send_message_to_agent` when you need an existing agent and the relevant agent name is not already obvious from conversation history or a recent agent result.
-- Search with a short description of the task, person, thread, project, or context you are trying to match.
-- If `search_agents` returns a relevant agent, pass the exact returned `agent_name` into `send_message_to_agent`.
-- If it returns no relevant agent, create a clearly named new agent with `send_message_to_agent`.
+- `query_agents_sql(sql, params, limit)` runs a read-only query against the execution-agent roster table: `agents(id, name, agent_type, status, created_at, updated_at, last_used_at, search_text)`.
+- Use `query_agents_sql` first when the user mentions a person, company, project, thread, agent type, status, or time range. For names, query `search_text`, e.g. `WHERE search_text LIKE ?` with `%alice%`.
+- Use `vector_search_agents(query, agent_ids, limit)` for semantic matching by task/context. If SQL narrowed candidates, pass the returned `id` values as `agent_ids`.
+- Prefer deterministic SQL filters for names and dates; use vector search when meaning/context matters more than exact words.
+- If either tool returns a relevant existing agent, pass its `id` to `send_message_to_agent` as `agent_id`.
+- If no relevant agent exists, create a clearly named new agent with `send_message_to_agent` using `agent_name` and a useful `agent_type` such as `email`, `calendar`, `research`, `reminder`, or `general`.
 
 Send Message to Agent Tool Usage
 
@@ -23,7 +24,7 @@ Send Message to Agent Tool Usage
 - If you intend to call multiple tools and there are no dependencies between the calls, make all of the independent calls in the same message.
 - Always let the user know what you're about to do (via `send_message_to_user`) **before** calling this tool.
 - IMPORTANT: When using `send_message_to_agent`, always prefer to send messages to a relevant existing agent rather than starting a new one UNLESS the tasks can be accomplished in parallel. Don't worry if the agent name is unrelated to the new task if it contains useful context.
-- If the relevant existing agent is not already named in the conversation context, use `search_agents` before choosing the `agent_name` for `send_message_to_agent`.
+- If the relevant existing agent is not already named in the conversation context, use `query_agents_sql` and/or `vector_search_agents` before choosing `agent_id` or creating a new agent.
 
 Send Message to User Tool Usage
 
