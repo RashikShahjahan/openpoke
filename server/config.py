@@ -28,35 +28,24 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
-DEFAULT_LLM_API_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_CHAT_MODEL = "openrouter/free"
-
-
-def _env_model(name: str) -> str:
-    return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL") or DEFAULT_OPENROUTER_CHAT_MODEL
-
-
-def _env_bool(name: str, fallback: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return fallback
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+def _env_model(name: str) -> Optional[str]:
+    return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL")
 
 
 class Settings(BaseModel):
     """Application settings with lightweight env fallbacks."""
 
     # LLM API and model selection
-    llm_api_base_url: str = Field(
-        default=os.getenv("OPENPOKE_LLM_BASE_URL", DEFAULT_LLM_API_BASE_URL)
+    llm_api_base_url: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_LLM_BASE_URL")
     )
-    interaction_agent_model: str = Field(default=_env_model("OPENPOKE_INTERACTION_AGENT_MODEL"))
-    execution_agent_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
-    execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
-    summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
-    embeddings_api_base_url: str = Field(
+    interaction_agent_model: Optional[str] = Field(default=_env_model("OPENPOKE_INTERACTION_AGENT_MODEL"))
+    execution_agent_model: Optional[str] = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
+    execution_agent_search_model: Optional[str] = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
+    summarizer_model: Optional[str] = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
+    embeddings_api_base_url: Optional[str] = Field(
         default=os.getenv("OPENPOKE_EMBEDDINGS_BASE_URL")
-        or os.getenv("OPENPOKE_LLM_BASE_URL", DEFAULT_LLM_API_BASE_URL)
+        or os.getenv("OPENPOKE_LLM_BASE_URL")
     )
 
     # Credentials / integrations
