@@ -48,7 +48,7 @@ _agent_embeddings = Table(
 
 
 class AgentSearchIndex:
-    """Caches agent embeddings in SQLite and ranks agents with sqlite-vector."""
+    """Caches agent embeddings in SQLite and ranks agents with sqliteai-vector."""
 
     def __init__(
         self,
@@ -280,7 +280,7 @@ def _embedding_to_blob(embedding: Sequence[float]) -> bytes:
 
 def _create_vector_engine(db_path: Path) -> Engine:
     engine = create_engine(f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30})
-    ext_path = importlib.resources.files("sqlite_vector.binaries") / "vector"
+    ext_path = _sqlite_vector_extension_path()
 
     @event.listens_for(engine, "connect")
     def _configure_connection(dbapi_connection: Any, _connection_record: Any) -> None:
@@ -296,6 +296,15 @@ def _create_vector_engine(db_path: Path) -> Engine:
             dbapi_connection.enable_load_extension(False)
 
     return engine
+
+
+def _sqlite_vector_extension_path() -> Path:
+    binaries = importlib.resources.files("sqlite_vector.binaries")
+    for candidate in ("vector", "vector.dylib", "vector.so", "vector.dll"):
+        path = binaries / candidate
+        if path.is_file():
+            return Path(str(path))
+    raise FileNotFoundError("Could not find sqlite_vector extension binary")
 
 
 _agent_search_index = AgentSearchIndex(DEFAULT_AGENT_DB_PATH)

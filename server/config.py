@@ -35,10 +35,16 @@ class Settings(BaseModel):
     llm_api_base_url: Optional[str] = Field(
         default=os.getenv("OPENPOKE_LLM_BASE_URL")
     )
-    interaction_agent_model: Optional[str] = Field(default=os.getenv("OPENPOKE_INTERACTION_AGENT_MODEL"))
-    execution_agent_model: Optional[str] = Field(default=os.getenv("OPENPOKE_EXECUTION_AGENT_MODEL"))
+    interaction_agent_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_INTERACTION_AGENT_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
+    execution_agent_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EXECUTION_AGENT_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
     execution_agent_search_model: Optional[str] = Field(default=os.getenv("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
-    summarizer_model: Optional[str] = Field(default=os.getenv("OPENPOKE_SUMMARIZER_MODEL"))
+    summarizer_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_SUMMARIZER_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
     embeddings_api_base_url: Optional[str] = Field(
         default=os.getenv("OPENPOKE_EMBEDDINGS_BASE_URL")
     )
@@ -65,6 +71,14 @@ class Settings(BaseModel):
     calendar_ics_path: Optional[str] = Field(default=os.getenv("OPENPOKE_CALENDAR_ICS_PATH"))
     calendar_refresh_seconds: int = Field(
         default=int(os.getenv("OPENPOKE_CALENDAR_REFRESH_SECONDS", "60"))
+    )
+
+    # Local read-only email integration backed by Thunderbird mbox storage
+    email_thunderbird_profile_path: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EMAIL_THUNDERBIRD_PROFILE_PATH")
+    )
+    email_refresh_seconds: int = Field(
+        default=int(os.getenv("OPENPOKE_EMAIL_REFRESH_SECONDS", "60"))
     )
 
     # Summarisation controls

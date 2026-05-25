@@ -103,9 +103,22 @@ class ExecutionAgent:
             "calendarConnectionStatus",
             "listCalendarEvents",
             "getCalendarAvailability",
+            "emailConnectionStatus",
+            "listEmailFolders",
+            "searchEmails",
+            "getEmailMessage",
         }:
             self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")
-            self._log_store.record_tool_response(self.name, tool_name, "<calendar result redacted>")
+            redaction = (
+                "<calendar result redacted>"
+                if tool_name in {
+                    "calendarConnectionStatus",
+                    "listCalendarEvents",
+                    "getCalendarAvailability",
+                }
+                else "<email result redacted>"
+            )
+            self._log_store.record_tool_response(self.name, tool_name, redaction)
             return
 
         self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")

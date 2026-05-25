@@ -10,6 +10,7 @@ from .conversation import (
     schedule_summarization,
 )
 from .calendar import CalendarEvent, LocalIcsCalendarService, get_calendar_service
+from .email import EmailFolder, EmailMessage, ThunderbirdEmailService, get_email_service
 from .execution import AgentRoster, ExecutionAgentLogStore, get_agent_roster, get_execution_agent_logs
 from .triggers import get_trigger_service
 from .timezone_store import TimezoneStore, get_timezone_store
@@ -34,6 +35,10 @@ __all__ = [
     "CalendarEvent",
     "LocalIcsCalendarService",
     "get_calendar_service",
+    "EmailFolder",
+    "EmailMessage",
+    "ThunderbirdEmailService",
+    "get_email_service",
     "AgentRoster",
     "ExecutionAgentLogStore",
     "get_agent_roster",
