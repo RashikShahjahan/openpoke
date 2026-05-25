@@ -2,5 +2,5 @@ pydantic>=2.7.0
 httpx>=0.27.0
 python-dateutil>=2.9.0
 icalendar>=5.0.0
-apsw>=3.53.1.0
+SQLAlchemy>=2.0.0
 sqliteai-vector>=1.0.0

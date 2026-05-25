@@ -1,15 +1,31 @@
-"""SQLite-backed execution agent roster."""
+"""SQLAlchemy-backed execution agent roster."""
 
 from __future__ import annotations
 
 import asyncio
 import re
-import sqlite3
 import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Sequence
+
+from sqlalchemy import (
+    Column,
+    Index,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    create_engine,
+    delete,
+    event,
+    insert,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.engine import Engine, RowMapping
 
 from ...logging_config import logger
 
@@ -22,6 +38,24 @@ _DANGEROUS_SQL_PATTERN = re.compile(
     r"\b(attach|alter|analyze|begin|commit|create|delete|detach|drop|insert|pragma|replace|"
     r"reindex|rollback|update|vacuum)\b",
     re.IGNORECASE,
+)
+
+_metadata = MetaData()
+_agents = Table(
+    "agents",
+    _metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", Text, nullable=False, unique=True),
+    Column("agent_type", Text, nullable=False, server_default="general"),
+    Column("status", Text, nullable=False, server_default="active"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Column("last_used_at", Text),
+    Column("search_text", Text, nullable=False),
+    Index("idx_agents_type", "agent_type"),
+    Index("idx_agents_status", "status"),
+    Index("idx_agents_created_at", "created_at"),
+    Index("idx_agents_last_used_at", "last_used_at"),
 )
 
 
@@ -61,10 +95,11 @@ def normalize_search_text(*values: str) -> str:
 
 
 class AgentRoster:
-    """SQLite roster for execution agents."""
+    """Persistent roster for execution agents."""
 
     def __init__(self, db_path: Path):
         self._db_path = db_path
+        self._engine = _create_engine(db_path)
         self._lock = threading.RLock()
         self.load()
 
@@ -77,43 +112,7 @@ class AgentRoster:
 
         with self._lock:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = self._connect()
-            try:
-                self._ensure_schema(conn)
-            finally:
-                conn.close()
-
-    def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
-        if readonly:
-            uri = f"file:{self._db_path}?mode=ro"
-            conn = sqlite3.connect(uri, timeout=30, isolation_level=None, uri=True)
-        else:
-            conn = sqlite3.connect(self._db_path, timeout=30, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        if not readonly:
-            conn.execute("PRAGMA journal_mode=WAL")
-        return conn
-
-    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agents (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                agent_type TEXT NOT NULL DEFAULT 'general',
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_used_at TEXT,
-                search_text TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_type ON agents(agent_type)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_last_used_at ON agents(last_used_at)")
+            _metadata.create_all(self._engine, tables=[_agents])
 
     def add_agent(self, agent_name: str, agent_type: str = "general") -> AgentRecord:
         """Create an agent if absent and return the roster record."""
@@ -130,18 +129,18 @@ class AgentRoster:
 
             now = _utc_now()
             search_text = normalize_search_text(name, normalized_type)
-            conn = self._connect()
-            try:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO agents(name, agent_type, status, created_at, updated_at, search_text)
-                    VALUES (?, ?, 'active', ?, ?, ?)
-                    """,
-                    (name, normalized_type, now, now, search_text),
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    insert(_agents).values(
+                        name=name,
+                        agent_type=normalized_type,
+                        status="active",
+                        created_at=now,
+                        updated_at=now,
+                        search_text=search_text,
+                    )
                 )
-                agent_id = int(cursor.lastrowid)
-            finally:
-                conn.close()
+                agent_id = int(result.inserted_primary_key[0])
 
         record = self.get_agent(agent_id)
         if record is None:  # pragma: no cover - defensive
@@ -151,27 +150,15 @@ class AgentRoster:
 
     def get_agent(self, agent_id: int) -> AgentRecord | None:
         with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT * FROM agents WHERE id = ? LIMIT 1",
-                    (agent_id,),
-                ).fetchone()
-                return _record_from_row(row) if row is not None else None
-            finally:
-                conn.close()
+            with self._engine.connect() as conn:
+                row = conn.execute(select(_agents).where(_agents.c.id == agent_id).limit(1)).mappings().first()
+            return _record_from_row(row) if row is not None else None
 
     def get_agent_by_name(self, agent_name: str) -> AgentRecord | None:
         with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT * FROM agents WHERE name = ? LIMIT 1",
-                    (agent_name.strip(),),
-                ).fetchone()
-                return _record_from_row(row) if row is not None else None
-            finally:
-                conn.close()
+            with self._engine.connect() as conn:
+                row = conn.execute(select(_agents).where(_agents.c.name == agent_name.strip()).limit(1)).mappings().first()
+            return _record_from_row(row) if row is not None else None
 
     def list_agents(
         self,
@@ -179,40 +166,29 @@ class AgentRoster:
         status: str | None = None,
         agent_type: str | None = None,
     ) -> list[AgentRecord]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        query = select(_agents)
         if status is not None:
-            clauses.append("status = ?")
-            params.append(status)
+            query = query.where(_agents.c.status == status)
         if agent_type is not None:
-            clauses.append("agent_type = ?")
-            params.append(agent_type)
-
-        sql = "SELECT * FROM agents"
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC"
+            query = query.where(_agents.c.agent_type == agent_type)
+        query = query.order_by(text("COALESCE(last_used_at, created_at) DESC"), _agents.c.id.desc())
 
         with self._lock:
-            conn = self._connect()
-            try:
-                return [_record_from_row(row) for row in conn.execute(sql, params)]
-            finally:
-                conn.close()
+            with self._engine.connect() as conn:
+                rows = conn.execute(query).mappings().all()
+            return [_record_from_row(row) for row in rows]
 
     def touch_agent(self, agent_id: int) -> AgentRecord | None:
         """Update recency metadata for a dispatched agent."""
 
         now = _utc_now()
         with self._lock:
-            conn = self._connect()
-            try:
+            with self._engine.begin() as conn:
                 conn.execute(
-                    "UPDATE agents SET last_used_at = ?, updated_at = ? WHERE id = ?",
-                    (now, now, agent_id),
+                    update(_agents)
+                    .where(_agents.c.id == agent_id)
+                    .values(last_used_at=now, updated_at=now)
                 )
-            finally:
-                conn.close()
         return self.get_agent(agent_id)
 
     def query_readonly(
@@ -229,12 +205,9 @@ class AgentRoster:
         self.load()
 
         with self._lock:
-            conn = self._connect(readonly=True)
-            try:
-                cursor = conn.execute(query, list(params or []))
-                rows = cursor.fetchmany(bounded_limit + 1)
-            finally:
-                conn.close()
+            with self._engine.connect() as conn:
+                result = conn.exec_driver_sql(query, tuple(params or []))
+                rows = result.mappings().fetchmany(bounded_limit + 1)
 
         truncated = len(rows) > bounded_limit
         return [dict(row) for row in rows[:bounded_limit]], truncated
@@ -243,11 +216,8 @@ class AgentRoster:
         """Clear roster rows while keeping the database file and schema."""
 
         with self._lock:
-            conn = self._connect()
-            try:
-                conn.execute("DELETE FROM agents")
-            finally:
-                conn.close()
+            with self._engine.begin() as conn:
+                conn.execute(delete(_agents))
 
     def _schedule_agent_embedding(self, agent_id: int) -> None:
         """Cache a new agent's embedding when roster updates happen in an event loop."""
@@ -273,7 +243,20 @@ class AgentRoster:
         loop.create_task(_embed_agent())
 
 
-def _record_from_row(row: sqlite3.Row) -> AgentRecord:
+def _create_engine(db_path: Path) -> Engine:
+    engine = create_engine(f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30})
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+
+    return engine
+
+
+def _record_from_row(row: RowMapping) -> AgentRecord:
     return AgentRecord(
         id=int(row["id"]),
         name=str(row["name"]),
