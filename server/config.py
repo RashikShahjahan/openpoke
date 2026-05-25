@@ -28,34 +28,28 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
-def _env_model(name: str) -> Optional[str]:
-    return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL")
-
-
 class Settings(BaseModel):
-    """Application settings with lightweight env fallbacks."""
+    """Application settings."""
 
     # LLM API and model selection
     llm_api_base_url: Optional[str] = Field(
         default=os.getenv("OPENPOKE_LLM_BASE_URL")
     )
-    interaction_agent_model: Optional[str] = Field(default=_env_model("OPENPOKE_INTERACTION_AGENT_MODEL"))
-    execution_agent_model: Optional[str] = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
-    execution_agent_search_model: Optional[str] = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
-    summarizer_model: Optional[str] = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
+    interaction_agent_model: Optional[str] = Field(default=os.getenv("OPENPOKE_INTERACTION_AGENT_MODEL"))
+    execution_agent_model: Optional[str] = Field(default=os.getenv("OPENPOKE_EXECUTION_AGENT_MODEL"))
+    execution_agent_search_model: Optional[str] = Field(default=os.getenv("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
+    summarizer_model: Optional[str] = Field(default=os.getenv("OPENPOKE_SUMMARIZER_MODEL"))
     embeddings_api_base_url: Optional[str] = Field(
         default=os.getenv("OPENPOKE_EMBEDDINGS_BASE_URL")
-        or os.getenv("OPENPOKE_LLM_BASE_URL")
     )
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(
-        default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
+        default=os.getenv("OPENROUTER_API_KEY")
     )
     embeddings_api_key: Optional[str] = Field(
         default=os.getenv("OPENPOKE_EMBEDDINGS_API_KEY")
         or os.getenv("OPENROUTER_API_KEY")
-        or os.getenv("OPENPOKE_LLM_API_KEY")
     )
 
     # Signal messaging integration

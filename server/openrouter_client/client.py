@@ -77,19 +77,14 @@ async def request_chat_completion(
                 url,
                 headers=_headers(api_key=api_key),
                 json=payload,
-                timeout=60.0,  # Set reasonable timeout instead of None
+                timeout=60.0,
             )
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _handle_response_error(exc)
+            response.raise_for_status()
             return response.json()
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - handled above
+        except httpx.HTTPStatusError as exc:
             _handle_response_error(exc)
         except httpx.HTTPError as exc:
             raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
-
-    raise OpenRouterError("OpenRouter request failed: unknown error")
 
 
 async def request_embeddings(
@@ -124,17 +119,12 @@ async def request_embeddings(
                 json=payload,
                 timeout=60.0,
             )
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _handle_response_error(exc)
+            response.raise_for_status()
             return response.json()
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - handled above
+        except httpx.HTTPStatusError as exc:
             _handle_response_error(exc)
         except httpx.HTTPError as exc:
             raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
-
-    raise OpenRouterError("OpenRouter request failed: unknown error")
 
 
 __all__ = [

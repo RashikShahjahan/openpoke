@@ -311,13 +311,7 @@ class InteractionAgentRuntime:
             return ToolResult(success=False, payload={"error": str(exc)})
 
         if not isinstance(result, ToolResult):
-            logger.warning(
-                "Tool did not return ToolResult; coercing",
-                extra={"tool": tool_call.name},
-            )
-            wrapped = ToolResult(success=True, payload=result)
-            self._log_tool_invocation(tool_call, stage="done", result=wrapped)
-            return wrapped
+            raise TypeError(f"Tool '{tool_call.name}' returned {type(result).__name__}")
 
         status = "success" if result.success else "error"
         logger.debug(
@@ -348,16 +342,7 @@ class InteractionAgentRuntime:
             key = "result" if result.success else "error"
             payload[key] = result.payload
 
-        return self._safe_json_dump(payload)
-
-    # Safely serialize objects to JSON with fallback to string representation
-    def _safe_json_dump(self, payload: Any) -> str:
-        """Serialize payload to JSON, falling back to repr on failure."""
-
-        try:
-            return json.dumps(payload, default=str)
-        except TypeError:
-            return repr(payload)
+        return json.dumps(payload, default=str)
 
     # Log tool execution stages (start, done, error) with structured metadata
     def _log_tool_invocation(

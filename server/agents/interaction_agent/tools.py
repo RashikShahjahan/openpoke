@@ -1,7 +1,6 @@
 """Tool definitions for interaction agent."""
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -358,32 +357,23 @@ def get_tool_schemas():
 async def handle_tool_call(name: str, arguments: Any) -> ToolResult:
     """Handle tool calls from interaction agent."""
     try:
-        if isinstance(arguments, str):
-            args = json.loads(arguments) if arguments.strip() else {}
-        elif isinstance(arguments, dict):
-            args = arguments
-        else:
+        if not isinstance(arguments, dict):
             return ToolResult(success=False, payload={"error": "Invalid arguments format"})
 
         if name == "send_message_to_agent":
-            return send_message_to_agent(**args)
+            return send_message_to_agent(**arguments)
         if name == "query_agents_sql":
-            return query_agents_sql(**args)
+            return query_agents_sql(**arguments)
         if name == "vector_search_agents":
-            return await vector_search_agents(**args)
+            return await vector_search_agents(**arguments)
         if name == "send_message_to_user":
-            return send_message_to_user(**args)
+            return send_message_to_user(**arguments)
         if name == "send_draft":
-            return send_draft(**args)
+            return send_draft(**arguments)
         if name == "wait":
-            return wait(**args)
+            return wait(**arguments)
 
         logger.warning("unexpected tool", extra={"tool": name})
         return ToolResult(success=False, payload={"error": f"Unknown tool: {name}"})
-    except json.JSONDecodeError:
-        return ToolResult(success=False, payload={"error": "Invalid JSON"})
     except TypeError as exc:
         return ToolResult(success=False, payload={"error": f"Missing required arguments: {exc}"})
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.error("tool call failed", extra={"tool": name, "error": str(exc)})
-        return ToolResult(success=False, payload={"error": "Failed to execute"})

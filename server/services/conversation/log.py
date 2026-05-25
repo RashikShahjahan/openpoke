@@ -60,10 +60,7 @@ class ConversationLog:
         self._working_memory_log = _resolve_working_memory_log()
 
     def _ensure_directory(self) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("conversation log directory creation failed", extra={"error": str(exc)})
+        self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def _append(self, tag: str, payload: str) -> str:
         timestamp = now_in_user_timezone("%Y-%m-%d %H:%M:%S")

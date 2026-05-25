@@ -19,7 +19,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import RowMapping
 
-from ...logging_config import logger
 from .models import TriggerRecord
 from .utils import to_storage_timestamp, utc_now
 
@@ -56,13 +55,7 @@ class TriggerStore:
         self._ensure_schema()
 
     def _ensure_directory(self) -> None:
-        try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "trigger directory creation failed",
-                extra={"error": str(exc)},
-            )
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _ensure_schema(self) -> None:
         with self._lock:

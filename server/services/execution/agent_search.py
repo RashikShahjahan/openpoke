@@ -24,7 +24,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
-from ...logging_config import logger
 from ...openrouter_client import request_embeddings
 from .roster import AgentRecord, AgentRoster, DEFAULT_AGENT_DB_PATH, get_agent_roster
 
@@ -88,36 +87,32 @@ class AgentSearchIndex:
         scan_limit = max(1, self._embedding_count(), len(candidate_ids))
 
         with self._lock:
-            try:
-                with self._engine.connect() as conn:
-                    self._ensure_schema()
-                    self._initialize_vector(conn, len(query_embedding))
-                    placeholders = ",".join("?" for _ in candidate_ids)
-                    rows = list(
-                        conn.exec_driver_sql(
-                            f"""
-                            SELECT e.agent_id, v.distance
-                            FROM vector_full_scan(?, ?, vector_as_f32(?, ?), ?) AS v
-                            JOIN {_TABLE_NAME} AS e ON e.rowid = v.rowid
-                            JOIN agents AS a ON a.id = e.agent_id
-                            WHERE e.model = ?
-                              AND a.status = 'active'
-                              AND e.agent_id IN ({placeholders})
-                            """,
-                            (
-                                _TABLE_NAME,
-                                _EMBEDDING_COLUMN,
-                                query_blob,
-                                len(query_embedding),
-                                scan_limit,
-                                self._embedding_model,
-                                *candidate_ids,
-                            ),
-                        )
+            with self._engine.connect() as conn:
+                self._ensure_schema()
+                self._initialize_vector(conn, len(query_embedding))
+                placeholders = ",".join("?" for _ in candidate_ids)
+                rows = list(
+                    conn.exec_driver_sql(
+                        f"""
+                        SELECT e.agent_id, v.distance
+                        FROM vector_full_scan(?, ?, vector_as_f32(?, ?), ?) AS v
+                        JOIN {_TABLE_NAME} AS e ON e.rowid = v.rowid
+                        JOIN agents AS a ON a.id = e.agent_id
+                        WHERE e.model = ?
+                          AND a.status = 'active'
+                          AND e.agent_id IN ({placeholders})
+                        """,
+                        (
+                            _TABLE_NAME,
+                            _EMBEDDING_COLUMN,
+                            query_blob,
+                            len(query_embedding),
+                            scan_limit,
+                            self._embedding_model,
+                            *candidate_ids,
+                        ),
                     )
-            except Exception as exc:
-                logger.warning("Failed to search agent embeddings", extra={"error": str(exc)})
-                return []
+                )
 
         records_by_id = {record.id: record for record in candidates}
         ordered: list[AgentRecord] = []
@@ -188,34 +183,26 @@ class AgentSearchIndex:
 
     def _has_embedding(self, agent_id: int) -> bool:
         with self._lock:
-            try:
-                self._ensure_schema()
-                with self._engine.connect() as conn:
-                    row = conn.execute(
-                        select(_agent_embeddings.c.id).where(
-                            _agent_embeddings.c.agent_id == agent_id,
-                            _agent_embeddings.c.model == self._embedding_model,
-                        ).limit(1)
-                    ).first()
-                return row is not None
-            except Exception as exc:
-                logger.warning("Failed to check agent embedding", extra={"error": str(exc)})
-                return False
+            self._ensure_schema()
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    select(_agent_embeddings.c.id).where(
+                        _agent_embeddings.c.agent_id == agent_id,
+                        _agent_embeddings.c.model == self._embedding_model,
+                    ).limit(1)
+                ).first()
+            return row is not None
 
     def _embedding_count(self) -> int:
         with self._lock:
-            try:
-                self._ensure_schema()
-                with self._engine.connect() as conn:
-                    row = conn.execute(
-                        select(func.count()).select_from(_agent_embeddings).where(
-                            _agent_embeddings.c.model == self._embedding_model
-                        )
-                    ).one()
-                return int(row[0])
-            except Exception as exc:
-                logger.warning("Failed to count agent embeddings", extra={"error": str(exc)})
-                return 0
+            self._ensure_schema()
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    select(func.count()).select_from(_agent_embeddings).where(
+                        _agent_embeddings.c.model == self._embedding_model
+                    )
+                ).one()
+            return int(row[0])
 
     def _save_embeddings(self, embeddings: Iterable[tuple[int, Sequence[float]]]) -> None:
         embeddings = list(embeddings)
@@ -223,37 +210,34 @@ class AgentSearchIndex:
             return
 
         with self._lock:
-            try:
-                self._ensure_schema()
-                with self._engine.begin() as conn:
-                    dimension = len(embeddings[0][1])
-                    self._initialize_vector(conn, dimension)
-                    for agent_id, embedding in embeddings:
-                        embedding_dimension = len(embedding)
-                        if embedding_dimension != dimension:
-                            raise ValueError("Embedding dimensions did not match")
-                        embedding_blob = _embedding_to_blob(embedding)
-                        conn.execute(
-                            sqlite_insert(_agent_embeddings)
-                            .values(
-                                agent_id=agent_id,
-                                model=self._embedding_model,
-                                dimension=embedding_dimension,
-                                embedding=func.vector_as_f32(embedding_blob, embedding_dimension),
-                            )
-                            .on_conflict_do_update(
-                                index_elements=[_agent_embeddings.c.agent_id],
-                                set_={
-                                    "model": self._embedding_model,
-                                    "dimension": embedding_dimension,
-                                    "embedding": func.vector_as_f32(embedding_blob, embedding_dimension),
-                                    "updated_at": func.current_timestamp(),
-                                },
-                            )
+            self._ensure_schema()
+            with self._engine.begin() as conn:
+                dimension = len(embeddings[0][1])
+                self._initialize_vector(conn, dimension)
+                for agent_id, embedding in embeddings:
+                    embedding_dimension = len(embedding)
+                    if embedding_dimension != dimension:
+                        raise ValueError("Embedding dimensions did not match")
+                    embedding_blob = _embedding_to_blob(embedding)
+                    conn.execute(
+                        sqlite_insert(_agent_embeddings)
+                        .values(
+                            agent_id=agent_id,
+                            model=self._embedding_model,
+                            dimension=embedding_dimension,
+                            embedding=func.vector_as_f32(embedding_blob, embedding_dimension),
                         )
-                    conn.exec_driver_sql("SELECT vector_quantize(?, ?)", (_TABLE_NAME, _EMBEDDING_COLUMN))
-            except Exception as exc:
-                logger.warning("Failed to save agent embeddings", extra={"error": str(exc)})
+                        .on_conflict_do_update(
+                            index_elements=[_agent_embeddings.c.agent_id],
+                            set_={
+                                "model": self._embedding_model,
+                                "dimension": embedding_dimension,
+                                "embedding": func.vector_as_f32(embedding_blob, embedding_dimension),
+                                "updated_at": func.current_timestamp(),
+                            },
+                        )
+                    )
+                conn.exec_driver_sql("SELECT vector_quantize(?, ?)", (_TABLE_NAME, _EMBEDDING_COLUMN))
 
     async def _embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed one or more texts using OpenRouter."""
@@ -267,10 +251,10 @@ class AgentSearchIndex:
             raise ValueError("Embedding response data was not a list")
 
         indexed_embeddings: dict[int, list[float]] = {}
-        for fallback_index, item in enumerate(raw_items):
+        for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            index = item.get("index", fallback_index)
+            index = item.get("index")
             embedding = item.get("embedding")
             if (
                 isinstance(index, int)

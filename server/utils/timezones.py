@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
-from ..logging_config import logger
 from ..services.timezone_store import get_timezone_store
 
 UTC = timezone.utc
@@ -21,24 +20,10 @@ def get_user_timezone_name(default: str = "UTC") -> str:
 
 
 def resolve_user_timezone(default: str = "UTC") -> ZoneInfo:
-    """Resolve the stored timezone to a ZoneInfo, falling back to default on error."""
+    """Resolve the stored timezone to a ZoneInfo."""
 
     tz_name = get_user_timezone_name(default)
-    try:
-        return ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        logger.warning(
-            "unknown timezone; defaulting to %s",
-            default,
-            extra={"timezone": tz_name},
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "timezone resolution failed; defaulting to %s",
-            default,
-            extra={"error": str(exc)},
-        )
-    return ZoneInfo(default)
+    return ZoneInfo(tz_name)
 
 
 def now_in_user_timezone(fmt: Optional[str] = None, *, default: str = "UTC") -> datetime | str:
@@ -55,21 +40,13 @@ def now_in_user_timezone(fmt: Optional[str] = None, *, default: str = "UTC") -> 
 
 
 def convert_to_user_timezone(dt: datetime, *, default: str = "UTC") -> datetime:
-    """Convert *dt* into the user's timezone with UTC fallback."""
+    """Convert *dt* into the user's timezone."""
 
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
 
     tz = resolve_user_timezone(default)
-    try:
-        return dt.astimezone(tz)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "timezone conversion failed; defaulting to %s",
-            default,
-            extra={"error": str(exc)},
-        )
-        return dt.astimezone(ZoneInfo(default))
+    return dt.astimezone(tz)
 
 
 __all__ = [
