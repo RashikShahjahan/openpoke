@@ -36,7 +36,8 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "agent_id": {
                         "type": "integer",
-                        "description": "Existing agent id from query_agents_sql or vector_search_agents. Prefer this when reusing an agent.",
+                        "minimum": 1,
+                        "description": "Existing positive agent id returned by query_agents_sql or vector_search_agents in this turn. Never guess an id; omit agent_id to create a new agent.",
                     },
                     "agent_name": {
                         "type": "string",
@@ -186,20 +187,36 @@ def send_message_to_agent(
     roster = get_agent_roster()
     is_new = False
 
+    normalized_agent_id: int | None = None
     if agent_id is not None:
         try:
-            record = roster.get_agent(int(agent_id))
+            normalized_agent_id = int(agent_id)
         except (TypeError, ValueError):
-            record = None
-        if record is None:
-            return ToolResult(success=False, payload={"error": f"Unknown agent_id: {agent_id}"})
-        if record.status != "active":
+            return ToolResult(success=False, payload={"error": f"Invalid agent_id: {agent_id}"})
+
+    if normalized_agent_id is not None and normalized_agent_id > 0:
+        record = roster.get_agent(normalized_agent_id)
+        if record is not None and record.status != "active":
             return ToolResult(success=False, payload={"error": f"Agent is not active: {agent_id}"})
+        if record is None:
+            logger.warning(
+                "Ignoring unknown agent_id for new execution agent: %s",
+                agent_id,
+            )
     else:
+        record = None
+        if normalized_agent_id is not None:
+            logger.warning(
+                "Ignoring non-positive agent_id for new execution agent: %s",
+                agent_id,
+            )
+
+    if record is None:
         if not agent_name or not agent_name.strip():
-            return ToolResult(
-                success=False,
-                payload={"error": "Provide agent_id to reuse an agent or agent_name to create one"},
+            agent_name = _default_agent_name(instructions, agent_type)
+            logger.warning(
+                "send_message_to_agent missing agent identity; generated agent name: %s",
+                agent_name,
             )
         existing = roster.get_agent_by_name(agent_name.strip())
         record = existing or roster.add_agent(agent_name, agent_type=agent_type)
@@ -287,6 +304,16 @@ async def vector_search_agents(
 
 def _agent_payload(record: AgentRecord) -> dict[str, Any]:
     return record.to_dict()
+
+
+def _default_agent_name(instructions: str, agent_type: str) -> str:
+    normalized_type = (agent_type or "general").strip() or "general"
+    prefix = f"{normalized_type[:1].upper()}{normalized_type[1:]} Task"
+    words = " ".join(str(instructions).split()).strip(" .,:;\t\n")
+    if not words:
+        return prefix
+    summary = " ".join(words.split()[:6]).strip(" .,:;")
+    return f"{prefix}: {summary}"[:80]
 
 
 # Send immediate message to user and record in conversation history

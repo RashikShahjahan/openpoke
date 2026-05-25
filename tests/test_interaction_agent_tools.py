@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from server.agents.interaction_agent import tools
 from server.services.execution.roster import AgentRecord, AgentRoster
 
@@ -13,6 +15,21 @@ def test_tool_schemas_expose_sql_and_vector_search() -> None:
     assert "query_agents_sql" in names
     assert "vector_search_agents" in names
     assert "search_agents" not in names
+
+
+def test_send_message_to_agent_schema_avoids_unsupported_combinators() -> None:
+    schema = next(
+        schema
+        for schema in tools.get_tool_schemas()
+        if schema["function"]["name"] == "send_message_to_agent"
+    )
+    params = schema["function"]["parameters"]
+
+    assert params["type"] == "object"
+    assert "anyOf" not in params
+    assert "oneOf" not in params
+    assert "allOf" not in params
+    assert params["properties"]["agent_id"]["minimum"] == 1
 
 
 def test_query_agents_sql_tool_uses_roster(monkeypatch, tmp_path) -> None:
@@ -105,3 +122,102 @@ def test_send_message_to_agent_reuses_agent_id(monkeypatch, tmp_path) -> None:
     assert fake_logs.requests == [("Email to Alice", "check whether Alice replied")]
     assert fake_manager.calls == [("Email to Alice", "check whether Alice replied")]
     assert roster.get_agent(record.id).last_used_at is not None
+
+
+def test_send_message_to_agent_generates_name_when_missing_identity(monkeypatch, tmp_path) -> None:
+    roster = AgentRoster(tmp_path / "agents.sqlite3")
+
+    class FakeLogs:
+        def __init__(self) -> None:
+            self.requests = []
+
+        def record_request(self, agent_name: str, instructions: str) -> None:
+            self.requests.append((agent_name, instructions))
+
+    class FakeBatchManager:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def execute_agent(self, agent_name: str, instructions: str):
+            self.calls.append((agent_name, instructions))
+            return SimpleNamespace(success=True)
+
+    fake_logs = FakeLogs()
+    fake_manager = FakeBatchManager()
+    monkeypatch.setattr(tools, "get_agent_roster", lambda: roster)
+    monkeypatch.setattr(tools, "get_execution_agent_logs", lambda: fake_logs)
+    monkeypatch.setattr(tools, "_EXECUTION_BATCH_MANAGER", fake_manager)
+
+    async def run() -> None:
+        result = tools.send_message_to_agent(
+            instructions="check whether urgent emails need attention",
+            agent_type="email",
+        )
+        await asyncio.sleep(0)
+
+        assert result.success is True
+        assert result.payload["agent"]["name"] == "Email Task: check whether urgent emails need attention"
+        assert result.payload["new_agent_created"] is True
+
+    asyncio.run(run())
+
+    assert fake_logs.requests == [
+        (
+            "Email Task: check whether urgent emails need attention",
+            "check whether urgent emails need attention",
+        )
+    ]
+    assert fake_manager.calls == fake_logs.requests
+
+
+@pytest.mark.parametrize("agent_id", [0, 1])
+def test_send_message_to_agent_treats_unknown_or_non_positive_agent_id_as_missing(
+    monkeypatch,
+    tmp_path,
+    agent_id: int,
+) -> None:
+    roster = AgentRoster(tmp_path / "agents.sqlite3")
+
+    class FakeLogs:
+        def __init__(self) -> None:
+            self.requests = []
+
+        def record_request(self, agent_name: str, instructions: str) -> None:
+            self.requests.append((agent_name, instructions))
+
+    class FakeBatchManager:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def execute_agent(self, agent_name: str, instructions: str):
+            self.calls.append((agent_name, instructions))
+            return SimpleNamespace(success=True)
+
+    fake_logs = FakeLogs()
+    fake_manager = FakeBatchManager()
+    monkeypatch.setattr(tools, "get_agent_roster", lambda: roster)
+    monkeypatch.setattr(tools, "get_execution_agent_logs", lambda: fake_logs)
+    monkeypatch.setattr(tools, "_EXECUTION_BATCH_MANAGER", fake_manager)
+
+    async def run() -> None:
+        result = tools.send_message_to_agent(
+            instructions="check whether urgent emails need attention",
+            agent_id=agent_id,
+            agent_type="email",
+        )
+        await asyncio.sleep(0)
+
+        assert result.success is True
+        assert result.payload["agent"]["id"] > 0
+        assert result.payload["agent"]["name"] == "Email Task: check whether urgent emails need attention"
+        assert result.payload["new_agent_created"] is True
+
+    asyncio.run(run())
+
+    assert fake_logs.requests == [
+        (
+            "Email Task: check whether urgent emails need attention",
+            "check whether urgent emails need attention",
+        )
+    ]
+    assert fake_manager.calls == fake_logs.requests

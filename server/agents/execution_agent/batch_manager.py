@@ -196,10 +196,6 @@ class ExecutionBatchManager:
         from ..interaction_agent.runtime import InteractionAgentRuntime
 
         runtime = InteractionAgentRuntime()
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(runtime.handle_agent_message(payload))
-            return
-
-        loop.create_task(runtime.handle_agent_message(payload))
+        result = await runtime.handle_agent_message(payload)
+        if not result.success:
+            raise RuntimeError(result.error or "Interaction agent failed to handle execution results")

@@ -46,11 +46,12 @@ def _render_execution_agent_guidance() -> str:
     agent_count = len(roster.list_agents(status="active"))
 
     if agent_count == 0:
-        return "No existing execution agents. Create one with send_message_to_agent when needed."
+        return "No existing execution agents. Create one with send_message_to_agent when needed; do not pass agent_id."
 
     return (
         f"{agent_count} existing execution agents are available. "
-        "Use query_agents_sql for structured filters and vector_search_agents for semantic matching before reusing one."
+        "Use query_agents_sql for structured filters and vector_search_agents for semantic matching before reusing one. "
+        "Only pass agent_id values returned by those tools in this turn."
     )
 
 

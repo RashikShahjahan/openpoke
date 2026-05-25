@@ -163,12 +163,16 @@ class InteractionAgentRuntime:
             if not parsed_tool_calls:
                 break
 
+            submitted_execution_agent = False
+
             for tool_call in parsed_tool_calls:
                 summary.tool_names.append(tool_call.name)
 
                 result = await self._execute_tool(tool_call)
 
                 if tool_call.name == "send_message_to_agent":
+                    if result.success:
+                        submitted_execution_agent = True
                     agent_name = tool_call.arguments.get("agent_name")
                     if isinstance(agent_name, str) and agent_name:
                         summary.execution_agents.add(agent_name)
@@ -188,6 +192,10 @@ class InteractionAgentRuntime:
                     "content": self._format_tool_result(tool_call, result),
                 }
                 messages.append(tool_message)
+
+            if submitted_execution_agent:
+                logger.info("Interaction loop paused after dispatching execution agent")
+                break
         else:
             raise RuntimeError("Reached tool iteration limit without final response")
 
@@ -376,11 +384,28 @@ class InteractionAgentRuntime:
             log_payload.update(detail)
 
         if stage == "done":
-            logger.info(f"Tool '{tool_call.name}' completed")
+            if result is not None and not result.success:
+                logger.warning(
+                    "Tool '%s' completed with error: %s",
+                    tool_call.name,
+                    self._tool_error_summary(result),
+                )
+            else:
+                logger.info(f"Tool '{tool_call.name}' completed")
         elif stage in {"error", "rejected"}:
             logger.warning(f"Tool '{tool_call.name}' {stage}")
         else:
             logger.debug(f"Tool '{tool_call.name}' {stage}")
+
+    def _tool_error_summary(self, result: ToolResult) -> str:
+        payload = result.payload
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if error:
+                return str(error)
+        if payload is not None:
+            return str(payload)
+        return "unknown error"
 
     # Determine final user-facing response from interaction loop summary
     def _finalize_response(self, summary: _LoopSummary) -> str:
