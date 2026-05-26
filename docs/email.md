@@ -28,7 +28,7 @@ If `OPENPOKE_EMAIL_THUNDERBIRD_PROFILE_PATH` is unset, OpenPoke attempts to auto
 
 - OpenPoke reads Thunderbird mbox files under `Mail/` and `ImapMail/`.
 - Thunderbird `.msf` index files and metadata files are ignored.
-- Searches can filter by text, folder, sender, recipient, subject, date range, and attachment presence.
+- Searches can filter by text, folder, sender, recipient, subject, date range, attachment presence, and canonical filters: inbox, sent, spam, read, unread, unarchived, and trash.
 - Email tool results are redacted from execution-agent logs to avoid persisting message details unnecessarily.
 
 ## Environment Variables

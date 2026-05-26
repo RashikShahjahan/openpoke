@@ -49,6 +49,10 @@ class EmailMessage:
     has_attachments: bool = False
     attachment_count: int = 0
     attachment_filenames: list[str] = field(default_factory=list)
+    is_read: bool = False
+    is_spam: bool = False
+    is_archived: bool = False
+    is_trash: bool = False
 
     def to_payload(self, *, include_body: bool = True) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -61,6 +65,10 @@ class EmailMessage:
             "has_attachments": self.has_attachments,
             "attachment_count": self.attachment_count,
             "attachment_filenames": self.attachment_filenames,
+            "is_read": self.is_read,
+            "is_spam": self.is_spam,
+            "is_archived": self.is_archived,
+            "is_trash": self.is_trash,
         }
         if self.timestamp:
             payload["timestamp"] = self.timestamp

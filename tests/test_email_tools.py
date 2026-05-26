@@ -20,6 +20,14 @@ def test_email_tools_are_registered() -> None:
     assert "getEmailMessage" in registry
 
 
+def test_search_email_schema_exposes_canonical_filters() -> None:
+    [search_schema] = [schema for schema in get_tool_schemas() if schema["function"]["name"] == "searchEmails"]
+
+    filters = search_schema["function"]["parameters"]["properties"]["filters"]
+
+    assert filters["items"]["enum"] == ["inbox", "sent", "spam", "read", "unread", "unarchived", "trash"]
+
+
 def test_email_connection_status_tool(monkeypatch) -> None:
     class FakeService:
         def connection_status(self):

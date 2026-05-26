@@ -177,6 +177,50 @@ def test_search_messages_filters_attachments(tmp_path: Path) -> None:
     assert results[0].attachment_filenames == ["invoice.pdf"]
 
 
+def test_search_messages_filters_canonical_folders(tmp_path: Path) -> None:
+    profile, inbox = _profile_with_inbox(tmp_path)
+    sent = inbox.parent / "Sent"
+    junk = inbox.parent / "Junk"
+    trash = inbox.parent / "Trash"
+    _write_message(inbox, _message(subject="Inbox message", message_id="<inbox@example.com>"))
+    _write_message(sent, _message(subject="Sent message", message_id="<sent@example.com>"))
+    _write_message(junk, _message(subject="Junk message", message_id="<junk@example.com>"))
+    _write_message(trash, _message(subject="Trash message", message_id="<trash@example.com>"))
+    service = ThunderbirdEmailService(str(profile))
+
+    assert [result.subject for result in service.search_messages(filters=["inbox"])] == ["Inbox message"]
+    assert [result.subject for result in service.search_messages(filters=["sent"])] == ["Sent message"]
+    assert [result.subject for result in service.search_messages(filters=["spam"])] == ["Junk message"]
+    assert [result.subject for result in service.search_messages(filters=["trash"])] == ["Trash message"]
+
+
+def test_search_messages_filters_read_unread_and_unarchived(tmp_path: Path) -> None:
+    profile, inbox = _profile_with_inbox(tmp_path)
+    archive = inbox.parent / "Archives"
+    read_message = _message(subject="Read message", message_id="<read@example.com>")
+    read_message["X-Mozilla-Status"] = "0001"
+    unread_message = _message(subject="Unread message", message_id="<unread@example.com>")
+    unread_message["X-Mozilla-Status"] = "0000"
+    archived_message = _message(subject="Archived message", message_id="<archived@example.com>")
+    archived_message["X-Mozilla-Status"] = "0000"
+    _write_message(inbox, read_message)
+    _write_message(inbox, unread_message)
+    _write_message(archive, archived_message)
+    service = ThunderbirdEmailService(str(profile))
+
+    read_subjects = {result.subject for result in service.search_messages(filters=["read"])}
+    unread_subjects = {result.subject for result in service.search_messages(filters=["unread"], max_results=10)}
+    unarchived_subjects = {result.subject for result in service.search_messages(filters=["unarchived"], max_results=10)}
+    unread_unarchived_subjects = {
+        result.subject for result in service.search_messages(filters=["unread", "unchived"], max_results=10)
+    }
+
+    assert read_subjects == {"Read message"}
+    assert unread_subjects == {"Unread message", "Archived message"}
+    assert unarchived_subjects == {"Read message", "Unread message"}
+    assert unread_unarchived_subjects == {"Unread message"}
+
+
 def test_missing_email_profile_reports_status_and_errors(tmp_path: Path) -> None:
     service = ThunderbirdEmailService(str(tmp_path / "missing"))
 

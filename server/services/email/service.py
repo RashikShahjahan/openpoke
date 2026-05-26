@@ -25,6 +25,21 @@ _ABSOLUTE_MAX_BODY_CHARS = 100_000
 _DEFAULT_MAX_RESULTS = 20
 _ABSOLUTE_MAX_RESULTS = 50
 _MBOX_EXCLUDED_NAMES = {"Trash.msf", "Inbox.msf", "Sent.msf"}
+_SUPPORTED_FILTERS = {"inbox", "sent", "spam", "read", "unread", "unarchived", "trash"}
+_FILTER_ALIASES = {
+    "junk": "spam",
+    "junk-mail": "spam",
+    "junk_mail": "spam",
+    "deleted": "trash",
+    "deleted-items": "trash",
+    "deleted_items": "trash",
+    "unarchive": "unarchived",
+    "un-archived": "unarchived",
+    "not-archived": "unarchived",
+    "not_archived": "unarchived",
+    "unchived": "unarchived",
+}
+_MOZILLA_READ_FLAG = 0x0001
 
 
 @dataclass(frozen=True)
@@ -46,6 +61,11 @@ class _MessageMetadata:
     has_attachments: bool
     attachment_count: int
     attachment_filenames: list[str]
+    folder_type: str
+    is_read: bool
+    is_spam: bool
+    is_archived: bool
+    is_trash: bool
 
 
 class _HtmlTextExtractor(HTMLParser):
@@ -181,6 +201,7 @@ class ThunderbirdEmailService:
         start_time: str | None = None,
         end_time: str | None = None,
         has_attachments: bool | None = None,
+        filters: Iterable[str] | str | None = None,
         max_results: int = _DEFAULT_MAX_RESULTS,
     ) -> list[EmailMessage]:
         profile_path = self._require_profile_path()
@@ -188,6 +209,7 @@ class ThunderbirdEmailService:
         limit = min(max(int(max_results), 1), _ABSOLUTE_MAX_RESULTS)
         start = _parse_query_datetime(start_time) if start_time else None
         end = _parse_query_datetime(end_time) if end_time else None
+        normalized_filters = _normalize_filters(filters)
         results: list[EmailMessage] = []
 
         for folder_path in folders:
@@ -202,6 +224,8 @@ class ThunderbirdEmailService:
                 if end and (timestamp is None or timestamp >= end):
                     continue
                 if has_attachments is not None and metadata.has_attachments != has_attachments:
+                    continue
+                if not _matches_filters(metadata, normalized_filters):
                     continue
 
                 email = metadata_email
@@ -356,6 +380,10 @@ class ThunderbirdEmailService:
         recipients = [_format_address(name, address) for name, address in getaddresses(recipient_headers)]
         timestamp = _message_timestamp(message)
         attachment_filenames = _attachment_filenames(message)
+        folder_type = _folder_type(folder.name)
+        is_spam = folder_type == "spam" or _has_spam_markers(message)
+        is_archived = folder_type == "archive"
+        is_trash = folder_type == "trash"
         stable_source = f"{folder.path}:{message_key}:{message_id or subject}:{timestamp or ''}"
         return _MessageMetadata(
             id=hashlib.sha1(stable_source.encode("utf-8", errors="replace")).hexdigest()[:24],
@@ -368,6 +396,11 @@ class ThunderbirdEmailService:
             has_attachments=bool(attachment_filenames),
             attachment_count=len(attachment_filenames),
             attachment_filenames=attachment_filenames,
+            folder_type=folder_type,
+            is_read=_is_read_message(message),
+            is_spam=is_spam,
+            is_archived=is_archived,
+            is_trash=is_trash,
         )
 
     def _metadata_to_email(self, metadata: _MessageMetadata, *, clean_text: str = "") -> EmailMessage:
@@ -384,6 +417,10 @@ class ThunderbirdEmailService:
             has_attachments=metadata.has_attachments,
             attachment_count=metadata.attachment_count,
             attachment_filenames=metadata.attachment_filenames,
+            is_read=metadata.is_read,
+            is_spam=metadata.is_spam,
+            is_archived=metadata.is_archived,
+            is_trash=metadata.is_trash,
         )
 
 
@@ -505,6 +542,110 @@ def _attachment_filenames(message: Message) -> list[str]:
         if "attachment" in disposition or filename:
             filenames.append(_decode_header_value(filename) or "unnamed attachment")
     return filenames
+
+
+def _normalize_filters(filters: Iterable[str] | str | None) -> set[str]:
+    if filters is None:
+        return set()
+
+    if isinstance(filters, str):
+        raw_filters = re.split(r"[\s,]+", filters)
+    else:
+        raw_filters = [str(item) for item in filters]
+
+    normalized: set[str] = set()
+    unsupported: list[str] = []
+    for raw_filter in raw_filters:
+        value = raw_filter.strip().lower().replace(" ", "-")
+        if not value:
+            continue
+        value = _FILTER_ALIASES.get(value, value)
+        if value not in _SUPPORTED_FILTERS:
+            unsupported.append(raw_filter)
+            continue
+        normalized.add(value)
+
+    if unsupported:
+        supported = ", ".join(sorted(_SUPPORTED_FILTERS))
+        raise ValueError(f"Unsupported email filters: {', '.join(unsupported)}. Supported filters: {supported}")
+    return normalized
+
+
+def _matches_filters(metadata: _MessageMetadata, filters: set[str]) -> bool:
+    if not filters:
+        return True
+
+    folder_filters = filters & {"inbox", "sent", "spam", "trash"}
+    if folder_filters:
+        matches_folder = (
+            ("inbox" in folder_filters and metadata.folder_type == "inbox")
+            or ("sent" in folder_filters and metadata.folder_type == "sent")
+            or ("spam" in folder_filters and metadata.is_spam)
+            or ("trash" in folder_filters and metadata.is_trash)
+        )
+        if not matches_folder:
+            return False
+
+    if "read" in filters and "unread" not in filters and not metadata.is_read:
+        return False
+    if "unread" in filters and "read" not in filters and metadata.is_read:
+        return False
+    if "unarchived" in filters and metadata.is_archived:
+        return False
+    return True
+
+
+def _folder_type(folder: str) -> str:
+    segments = _folder_segments(folder)
+    if not segments:
+        return "other"
+
+    last = segments[-1]
+    if any(segment in {"archive", "archives"} for segment in segments):
+        return "archive"
+    if last in {"junk", "spam", "junk-mail", "junk e-mail", "junk email", "bulk-mail", "bulk mail"}:
+        return "spam"
+    if last in {"trash", "deleted", "deleted-items", "deleted items", "deleted messages", "bin"}:
+        return "trash"
+    if last in {"sent", "sent-mail", "sent mail", "sent-items", "sent items", "sent messages"}:
+        return "sent"
+    if last == "inbox":
+        return "inbox"
+    return "other"
+
+
+def _folder_segments(folder: str) -> list[str]:
+    return [
+        segment.strip().lower().replace("_", "-")
+        for segment in folder.replace("\\", "/").split("/")
+        if segment.strip()
+    ]
+
+
+def _is_read_message(message: Message) -> bool:
+    if _parse_mozilla_status(message.get("X-Mozilla-Status")) & _MOZILLA_READ_FLAG:
+        return True
+    return "R" in (message.get("Status") or "")
+
+
+def _parse_mozilla_status(value: str | None) -> int:
+    if not value:
+        return 0
+    try:
+        return int(value.strip().split()[0], 16)
+    except (IndexError, ValueError):
+        return 0
+
+
+def _has_spam_markers(message: Message) -> bool:
+    keys = " ".join(message.get_all("X-Mozilla-Keys", [])).lower()
+    key_tokens = {token.strip("$") for token in re.split(r"[\s,;]+", keys) if token}
+    if key_tokens & {"junk", "spam"}:
+        return True
+
+    spam_flag = (message.get("X-Spam-Flag") or "").strip().lower()
+    spam_status = (message.get("X-Spam-Status") or "").strip().lower()
+    return spam_flag in {"yes", "true", "1"} or spam_status.startswith("yes")
 
 
 def _matches(

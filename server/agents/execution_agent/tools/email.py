@@ -44,7 +44,7 @@ _SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "searchEmails",
-            "description": "Search read-only local Thunderbird emails by text, metadata, folder, date, or attachments. Returns lightweight summaries with snippets; for triage, prefer narrow date windows and 25 or fewer results, then call getEmailMessage only for selected full bodies.",
+            "description": "Search read-only local Thunderbird emails by text, metadata, folder, date, attachments, or canonical filters. Returns lightweight summaries with snippets; for triage, prefer narrow date windows and 25 or fewer results, then call getEmailMessage only for selected full bodies.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -55,6 +55,14 @@ _SCHEMAS: List[Dict[str, Any]] = [
                     "folder": {
                         "type": "string",
                         "description": "Folder id or name to search, such as Inbox or Sent.",
+                    },
+                    "filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["inbox", "sent", "spam", "read", "unread", "unarchived", "trash"],
+                        },
+                        "description": "Canonical filters to apply. Location filters (inbox, sent, spam, trash) match common Thunderbird folder names; read/unread use Thunderbird message state; unarchived excludes archive folders. Combine values such as ['inbox', 'unread'].",
                     },
                     "sender": {
                         "type": "string",
