@@ -44,7 +44,7 @@ _SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "searchEmails",
-            "description": "Search read-only local Thunderbird emails by text, metadata, folder, date, or attachments.",
+            "description": "Search read-only local Thunderbird emails by text, metadata, folder, date, or attachments. Returns lightweight summaries with snippets; for triage, prefer narrow date windows and 25 or fewer results, then call getEmailMessage only for selected full bodies.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -82,7 +82,7 @@ _SCHEMAS: List[Dict[str, Any]] = [
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum emails to return. Defaults to 20 and is capped at 100.",
+                        "description": "Maximum emails to return. Defaults to 20 and is capped at 50. Use 25 or fewer for inbox triage.",
                     },
                 },
                 "required": [],
@@ -94,13 +94,17 @@ _SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "getEmailMessage",
-            "description": "Read one local Thunderbird email by id returned from searchEmails.",
+            "description": "Read one full local Thunderbird email by id returned from searchEmails. Use only for shortlisted messages and pass a reduced max_body_chars when a snippet is enough.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "message_id": {
                         "type": "string",
                         "description": "OpenPoke email id or RFC Message-ID returned by searchEmails.",
+                    },
+                    "max_body_chars": {
+                        "type": "integer",
+                        "description": "Maximum body characters to return. Defaults to 20000 and is capped at 100000.",
                     }
                 },
                 "required": ["message_id"],
@@ -161,12 +165,15 @@ def _search_emails_tool(*, agent_name: str, **kwargs: Any) -> Dict[str, Any]:
         agent_name,
         description=f"searchEmails succeeded | count={len(messages)}",
     )
-    return {"emails": [message.to_payload(include_body=True) for message in messages]}
+    return {"emails": [message.to_payload(include_body=False) for message in messages]}
 
 
-def _get_message_tool(*, agent_name: str, message_id: str) -> Dict[str, Any]:
+def _get_message_tool(*, agent_name: str, message_id: str, max_body_chars: int | None = None) -> Dict[str, Any]:
     try:
-        message = _EMAIL_SERVICE.get_message(message_id=message_id)
+        kwargs = {"message_id": message_id}
+        if max_body_chars is not None:
+            kwargs["max_body_chars"] = max_body_chars
+        message = _EMAIL_SERVICE.get_message(**kwargs)
     except Exception as exc:  # pragma: no cover - defensive
         _LOG_STORE.record_action(
             agent_name,

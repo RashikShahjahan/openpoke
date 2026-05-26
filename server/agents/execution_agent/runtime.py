@@ -1,5 +1,6 @@
 """Simplified Execution Agent Runtime."""
 
+import asyncio
 import inspect
 import json
 from typing import Dict, Any, List, Optional, Tuple
@@ -26,6 +27,7 @@ class ExecutionAgentRuntime:
     """Manages the execution of a single agent request."""
 
     MAX_TOOL_ITERATIONS = 8
+    TOOL_TIMEOUT_SECONDS = 30
 
     # Initialize execution agent runtime with settings, tools, and agent instance
     def __init__(self, agent_name: str):
@@ -221,10 +223,24 @@ class ExecutionAgentRuntime:
             return False, {"error": f"Unknown tool: {tool_name}"}
 
         try:
-            result = tool_func(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await asyncio.wait_for(
+                self._call_tool(tool_func, arguments),
+                timeout=self.TOOL_TIMEOUT_SECONDS,
+            )
             return True, result
+        except asyncio.TimeoutError:
+            return False, {"error": f"Tool '{tool_name}' timed out after {self.TOOL_TIMEOUT_SECONDS} seconds"}
         except Exception as e:
             logger.exception("[%s] Tool '%s' failed: %s", self.agent.name, tool_name, e)
             return False, {"error": str(e)}
+
+    async def _call_tool(self, tool_func: Any, arguments: Dict) -> Any:
+        """Call async tools directly and synchronous tools in a worker thread."""
+
+        if inspect.iscoroutinefunction(tool_func):
+            return await tool_func(**arguments)
+
+        result = await asyncio.to_thread(tool_func, **arguments)
+        if inspect.isawaitable(result):
+            return await result
+        return result

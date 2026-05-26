@@ -71,7 +71,32 @@ def test_search_emails_tool(monkeypatch) -> None:
     result = registry["searchEmails"](query="private")
 
     assert result["emails"][0]["id"] == "email-1"
-    assert result["emails"][0]["clean_text"] == "Private body"
+    assert result["emails"][0]["snippet"] == "Private body"
+    assert "clean_text" not in result["emails"][0]
+
+
+def test_get_email_message_tool_returns_body(monkeypatch) -> None:
+    class FakeService:
+        def get_message(self, *, message_id: str, max_body_chars: int = 20_000):
+            assert message_id == "email-1"
+            assert max_body_chars == 1200
+            return EmailMessage(
+                id="email-1",
+                folder="Inbox",
+                subject="Private subject",
+                sender="Alice <alice@example.com>",
+                recipients=["Bob <bob@example.com>"],
+                timestamp="2026-05-23T15:00:00+00:00",
+                clean_text="Private body",
+            )
+
+    monkeypatch.setattr(email, "_EMAIL_SERVICE", FakeService())
+
+    registry = email.build_registry("email-test")
+    result = registry["getEmailMessage"](message_id="email-1", max_body_chars=1200)
+
+    assert result["email"]["clean_text"] == "Private body"
+    assert result["email"]["snippet"] == "Private body"
 
 
 def test_execution_agent_redacts_email_tool_results() -> None:

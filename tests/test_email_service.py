@@ -100,6 +100,69 @@ def test_get_message_by_openpoke_id(tmp_path: Path) -> None:
     assert message.subject == "Find me"
 
 
+def test_get_message_applies_body_limit(tmp_path: Path) -> None:
+    profile, inbox = _profile_with_inbox(tmp_path)
+    _write_message(inbox, _message(subject="Long body", body="abcdefghij", message_id="<long@example.com>"))
+    service = ThunderbirdEmailService(str(profile))
+    [result] = service.search_messages(subject="Long body")
+
+    message = service.get_message(message_id=result.id, max_body_chars=4)
+
+    assert message is not None
+    assert message.clean_text == "abcd\n[truncated]"
+
+
+def test_search_filters_metadata_before_extracting_body(tmp_path: Path) -> None:
+    profile, inbox = _profile_with_inbox(tmp_path)
+    _write_message(inbox, _message(subject="Skip me", message_id="<skip@example.com>"))
+    _write_message(inbox, _message(subject="Target", message_id="<target@example.com>"))
+    service = ThunderbirdEmailService(str(profile))
+
+    class CountingCleaner:
+        def __init__(self) -> None:
+            self.subjects: list[str] = []
+
+        def clean_message(self, message, *, max_chars: int = 20_000) -> str:
+            subject = message.get("Subject", "")
+            self.subjects.append(subject)
+            return subject
+
+    cleaner = CountingCleaner()
+    service._cleaner = cleaner
+
+    results = service.search_messages(subject="Target")
+
+    assert len(results) == 1
+    assert results[0].subject == "Target"
+    assert cleaner.subjects == ["Target"]
+
+
+def test_get_message_filters_id_before_extracting_body(tmp_path: Path) -> None:
+    profile, inbox = _profile_with_inbox(tmp_path)
+    _write_message(inbox, _message(subject="Target", message_id="<target@example.com>"))
+    _write_message(inbox, _message(subject="Skip me", message_id="<skip@example.com>"))
+    service = ThunderbirdEmailService(str(profile))
+    [result] = service.search_messages(subject="Target")
+
+    class CountingCleaner:
+        def __init__(self) -> None:
+            self.subjects: list[str] = []
+
+        def clean_message(self, message, *, max_chars: int = 20_000) -> str:
+            subject = message.get("Subject", "")
+            self.subjects.append(subject)
+            return subject
+
+    cleaner = CountingCleaner()
+    service._cleaner = cleaner
+
+    message = service.get_message(message_id=result.id)
+
+    assert message is not None
+    assert message.subject == "Target"
+    assert cleaner.subjects == ["Target"]
+
+
 def test_search_messages_filters_attachments(tmp_path: Path) -> None:
     profile, inbox = _profile_with_inbox(tmp_path)
     message = _message(subject="Invoice", body="See attachment", message_id="<invoice@example.com>")

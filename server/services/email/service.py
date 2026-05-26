@@ -20,8 +20,10 @@ from ...utils.timezones import convert_to_user_timezone
 from .models import EmailFolder, EmailMessage
 
 _DEFAULT_MAX_BODY_CHARS = 20_000
+_DEFAULT_SNIPPET_CHARS = 500
+_ABSOLUTE_MAX_BODY_CHARS = 100_000
 _DEFAULT_MAX_RESULTS = 20
-_ABSOLUTE_MAX_RESULTS = 100
+_ABSOLUTE_MAX_RESULTS = 50
 _MBOX_EXCLUDED_NAMES = {"Trash.msf", "Inbox.msf", "Sent.msf"}
 
 
@@ -30,6 +32,20 @@ class _FolderPath:
     id: str
     name: str
     path: Path
+
+
+@dataclass(frozen=True)
+class _MessageMetadata:
+    id: str
+    folder: str
+    subject: str
+    sender: str
+    recipients: list[str]
+    timestamp: str | None
+    message_id: str | None
+    has_attachments: bool
+    attachment_count: int
+    attachment_filenames: list[str]
 
 
 class _HtmlTextExtractor(HTMLParser):
@@ -176,16 +192,37 @@ class ThunderbirdEmailService:
 
         for folder_path in folders:
             for message_key, message in self._iter_mbox_messages(folder_path.path):
-                email = self._to_email_message(folder_path, message_key, message)
-                if not _matches(email, query=query, sender=sender, recipient=recipient, subject=subject):
+                metadata = self._to_message_metadata(folder_path, message_key, message)
+                metadata_email = self._metadata_to_email(metadata)
+                if not _matches(metadata_email, query=None, sender=sender, recipient=recipient, subject=subject):
                     continue
-                timestamp = _parse_payload_timestamp(email.timestamp)
+                timestamp = _parse_payload_timestamp(metadata.timestamp)
                 if start and (timestamp is None or timestamp < start):
                     continue
                 if end and (timestamp is None or timestamp >= end):
                     continue
-                if has_attachments is not None and email.has_attachments != has_attachments:
+                if has_attachments is not None and metadata.has_attachments != has_attachments:
                     continue
+
+                email = metadata_email
+                if query and not _matches(email, query=query, sender=None, recipient=None, subject=None):
+                    email = self._to_email_message(
+                        folder_path,
+                        message_key,
+                        message,
+                        metadata=metadata,
+                        max_body_chars=_DEFAULT_SNIPPET_CHARS,
+                    )
+                    if not _matches(email, query=query, sender=None, recipient=None, subject=None):
+                        continue
+                else:
+                    email = self._to_email_message(
+                        folder_path,
+                        message_key,
+                        message,
+                        metadata=metadata,
+                        max_body_chars=_DEFAULT_SNIPPET_CHARS,
+                    )
 
                 results.append(email)
                 if len(results) >= limit:
@@ -196,13 +233,20 @@ class ThunderbirdEmailService:
         results.sort(key=lambda item: item.timestamp or "", reverse=True)
         return results[:limit]
 
-    def get_message(self, *, message_id: str) -> EmailMessage | None:
+    def get_message(self, *, message_id: str, max_body_chars: int = _DEFAULT_MAX_BODY_CHARS) -> EmailMessage | None:
         profile_path = self._require_profile_path()
+        body_limit = _normalize_body_limit(max_body_chars)
         for folder_path in self._load_folders(profile_path):
             for message_key, message in self._iter_mbox_messages(folder_path.path):
-                email = self._to_email_message(folder_path, message_key, message)
-                if email.id == message_id or email.message_id == message_id:
-                    return email
+                metadata = self._to_message_metadata(folder_path, message_key, message)
+                if metadata.id == message_id or metadata.message_id == message_id:
+                    return self._to_email_message(
+                        folder_path,
+                        message_key,
+                        message,
+                        metadata=metadata,
+                        max_body_chars=body_limit,
+                    )
         return None
 
     def _resolve_profile_path(self) -> Path | None:
@@ -276,7 +320,7 @@ class ThunderbirdEmailService:
         try:
             mbox = mailbox.mbox(path, create=False)
             try:
-                for key in mbox.keys():
+                for key in reversed(list(mbox.keys())):
                     yield str(key), mbox.get_message(key)
             finally:
                 mbox.close()
@@ -286,7 +330,25 @@ class ThunderbirdEmailService:
     def _count_messages(self, path: Path) -> int:
         return sum(1 for _key, _message in self._iter_mbox_messages(path))
 
-    def _to_email_message(self, folder: _FolderPath, message_key: str, message: Message) -> EmailMessage:
+    def _to_email_message(
+        self,
+        folder: _FolderPath,
+        message_key: str,
+        message: Message,
+        *,
+        metadata: _MessageMetadata | None = None,
+        max_body_chars: int = _DEFAULT_MAX_BODY_CHARS,
+    ) -> EmailMessage:
+        metadata = metadata or self._to_message_metadata(folder, message_key, message)
+        clean_text = self._cleaner.clean_message(message, max_chars=_normalize_body_limit(max_body_chars))
+        return self._metadata_to_email(metadata, clean_text=clean_text)
+
+    def _to_message_metadata(
+        self,
+        folder: _FolderPath,
+        message_key: str,
+        message: Message,
+    ) -> _MessageMetadata:
         message_id = _decode_header_value(message.get("Message-ID")) or None
         subject = _decode_header_value(message.get("Subject")) or "No Subject"
         sender = _decode_header_value(message.get("From")) or "Unknown Sender"
@@ -295,7 +357,7 @@ class ThunderbirdEmailService:
         timestamp = _message_timestamp(message)
         attachment_filenames = _attachment_filenames(message)
         stable_source = f"{folder.path}:{message_key}:{message_id or subject}:{timestamp or ''}"
-        return EmailMessage(
+        return _MessageMetadata(
             id=hashlib.sha1(stable_source.encode("utf-8", errors="replace")).hexdigest()[:24],
             folder=folder.name,
             subject=subject,
@@ -303,10 +365,25 @@ class ThunderbirdEmailService:
             recipients=[value for value in recipients if value],
             timestamp=timestamp,
             message_id=message_id,
-            clean_text=self._cleaner.clean_message(message),
             has_attachments=bool(attachment_filenames),
             attachment_count=len(attachment_filenames),
             attachment_filenames=attachment_filenames,
+        )
+
+    def _metadata_to_email(self, metadata: _MessageMetadata, *, clean_text: str = "") -> EmailMessage:
+        return EmailMessage(
+            id=metadata.id,
+            folder=metadata.folder,
+            subject=metadata.subject,
+            sender=metadata.sender,
+            recipients=metadata.recipients,
+            timestamp=metadata.timestamp,
+            message_id=metadata.message_id,
+            clean_text=clean_text,
+            snippet=_build_snippet(clean_text),
+            has_attachments=metadata.has_attachments,
+            attachment_count=metadata.attachment_count,
+            attachment_filenames=metadata.attachment_filenames,
         )
 
 
@@ -333,6 +410,21 @@ def _folder_name(path: Path, root: Path) -> str:
 
 def _folder_id(value: str) -> str:
     return hashlib.sha1(value.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _normalize_body_limit(value: int | None) -> int:
+    try:
+        parsed = int(value) if value is not None else _DEFAULT_MAX_BODY_CHARS
+    except (TypeError, ValueError):
+        parsed = _DEFAULT_MAX_BODY_CHARS
+    return min(max(parsed, 1), _ABSOLUTE_MAX_BODY_CHARS)
+
+
+def _build_snippet(text: str, *, max_chars: int = _DEFAULT_SNIPPET_CHARS) -> str:
+    normalized = " ".join((text or "").split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + "..."
 
 
 def _decode_header_value(value: str | None) -> str:
