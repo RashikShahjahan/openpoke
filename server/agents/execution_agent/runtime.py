@@ -1,5 +1,6 @@
 """Simplified Execution Agent Runtime."""
 
+import asyncio
 import inspect
 import json
 from typing import Dict, Any, List, Optional, Tuple
@@ -26,6 +27,7 @@ class ExecutionAgentRuntime:
     """Manages the execution of a single agent request."""
 
     MAX_TOOL_ITERATIONS = 8
+    TOOL_TIMEOUT_SECONDS = 30
 
     # Initialize execution agent runtime with settings, tools, and agent instance
     def __init__(self, agent_name: str):
@@ -55,7 +57,7 @@ class ExecutionAgentRuntime:
                 logger.info(
                     f"[{self.agent.name}] Requesting plan (iteration {iteration + 1})"
                 )
-                response = await self._make_llm_call(system_prompt, messages, with_tools=True)
+                response = await self._make_llm_call(system_prompt, messages)
                 assistant_message = response.get("choices", [{}])[0].get("message", {})
 
                 if not assistant_message:
@@ -73,7 +75,7 @@ class ExecutionAgentRuntime:
                 messages.append(assistant_entry)
 
                 if not parsed_tool_calls:
-                    final_response = assistant_entry["content"] or "No action required."
+                    final_response = assistant_entry["content"]
                     break
 
                 for tool_call in parsed_tool_calls:
@@ -149,16 +151,15 @@ class ExecutionAgentRuntime:
             )
 
     # Execute OpenRouter API call with system prompt, messages, and optional tool schemas
-    async def _make_llm_call(self, system_prompt: str, messages: List[Dict], with_tools: bool) -> Dict:
+    async def _make_llm_call(self, system_prompt: str, messages: List[Dict]) -> Dict:
         """Make an LLM call."""
-        tools_to_send = self.tool_schemas if with_tools else None
-        logger.info(f"[{self.agent.name}] Calling LLM with model: {self.model}, tools: {len(tools_to_send) if tools_to_send else 0}")
+        logger.info(f"[{self.agent.name}] Calling LLM with model: {self.model}, tools: {len(self.tool_schemas)}")
         return await request_chat_completion(
             model=self.model,
             messages=messages,
             system=system_prompt,
             api_key=self.api_key,
-            tools=tools_to_send
+            tools=self.tool_schemas
         )
 
     # Parse and validate tool calls from LLM response into structured format
@@ -172,10 +173,7 @@ class ExecutionAgentRuntime:
             args = function.get("arguments", "")
 
             if isinstance(args, str):
-                try:
-                    args = json.loads(args) if args else {}
-                except json.JSONDecodeError:
-                    args = {}
+                args = json.loads(args) if args else {}
 
             if name:
                 tool_calls.append({
@@ -186,13 +184,10 @@ class ExecutionAgentRuntime:
 
         return tool_calls
 
-    # Safely convert objects to JSON with fallback to string representation
+    # Convert objects to JSON for persisted execution history.
     def _safe_json_dump(self, payload: Any) -> str:
-        """Serialize payload to JSON, falling back to string representation."""
-        try:
-            return json.dumps(payload, default=str)
-        except TypeError:
-            return str(payload)
+        """Serialize payload to JSON."""
+        return json.dumps(payload, default=str)
 
     # Format tool execution results into JSON structure for LLM consumption
     def _format_tool_result(
@@ -228,10 +223,24 @@ class ExecutionAgentRuntime:
             return False, {"error": f"Unknown tool: {tool_name}"}
 
         try:
-            result = tool_func(**arguments)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await asyncio.wait_for(
+                self._call_tool(tool_func, arguments),
+                timeout=self.TOOL_TIMEOUT_SECONDS,
+            )
             return True, result
+        except asyncio.TimeoutError:
+            return False, {"error": f"Tool '{tool_name}' timed out after {self.TOOL_TIMEOUT_SECONDS} seconds"}
         except Exception as e:
             logger.exception("[%s] Tool '%s' failed: %s", self.agent.name, tool_name, e)
             return False, {"error": str(e)}
+
+    async def _call_tool(self, tool_func: Any, arguments: Dict) -> Any:
+        """Call async tools directly and synchronous tools in a worker thread."""
+
+        if inspect.iscoroutinefunction(tool_func):
+            return await tool_func(**arguments)
+
+        result = await asyncio.to_thread(tool_func, **arguments)
+        if inspect.isawaitable(result):
+            return await result
+        return result

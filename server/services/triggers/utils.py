@@ -7,9 +7,6 @@ from dateutil import parser as date_parser
 from dateutil.rrule import rrulestr
 from zoneinfo import ZoneInfo
 
-from ...logging_config import logger
-
-
 UTC = timezone.utc
 DEFAULT_STATUS = "active"
 VALID_STATUSES = {"active", "paused", "completed"}
@@ -28,36 +25,24 @@ def to_storage_timestamp(moment: datetime) -> str:
 
 
 def resolve_timezone(timezone_name: Optional[str]) -> ZoneInfo:
-    """Return a `ZoneInfo` instance, defaulting to UTC on errors."""
+    """Return a `ZoneInfo` instance."""
 
-    if timezone_name:
-        try:
-            return ZoneInfo(timezone_name)
-        except Exception:
-            logger.warning(
-                "unknown timezone provided; defaulting to UTC",
-                extra={"timezone": timezone_name},
-            )
-    return ZoneInfo("UTC")
+    return ZoneInfo(timezone_name or "UTC")
 
 
 def normalize_status(status: Optional[str]) -> str:
-    """Clamp trigger status to the known set."""
+    """Normalize trigger status."""
 
     if not status:
         return DEFAULT_STATUS
     normalized = status.lower()
     if normalized not in VALID_STATUSES:
-        logger.warning(
-            "invalid status supplied; defaulting to active",
-            extra={"status": status},
-        )
-        return DEFAULT_STATUS
+        raise ValueError(f"invalid trigger status: {status}")
     return normalized
 
 
 def parse_iso(timestamp: str) -> datetime:
-    """Parse an ISO timestamp, defaulting to UTC when timezone is absent."""
+    """Parse an ISO timestamp."""
 
     dt = date_parser.isoparse(timestamp)
     if dt.tzinfo is None:
@@ -77,13 +62,13 @@ def parse_datetime(timestamp: str, tz: ZoneInfo) -> datetime:
 
 
 def coerce_start_datetime(
-    start_time: Optional[str], tz: ZoneInfo, fallback: datetime
+    start_time: Optional[str], tz: ZoneInfo, reference: datetime
 ) -> datetime:
     """Return the desired start datetime in the agent's timezone."""
 
     if start_time:
         return parse_datetime(start_time, tz)
-    return fallback.astimezone(tz)
+    return reference.astimezone(tz)
 
 
 def build_recurrence(

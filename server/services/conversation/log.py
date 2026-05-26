@@ -8,7 +8,7 @@ from typing import Dict, Iterator, List, Optional, Protocol, Tuple
 
 from ...config import get_settings
 from ...logging_config import logger
-from ...models import ChatMessage
+from ...messaging.context import publish_reply
 from ...utils.timezones import now_in_user_timezone
 from typing import TYPE_CHECKING
 
@@ -60,10 +60,7 @@ class ConversationLog:
         self._working_memory_log = _resolve_working_memory_log()
 
     def _ensure_directory(self) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("conversation log directory creation failed", extra={"error": str(exc)})
+        self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def _append(self, tag: str, payload: str) -> str:
         timestamp = now_in_user_timezone("%Y-%m-%d %H:%M:%S")
@@ -144,6 +141,7 @@ class ConversationLog:
     def record_reply(self, content: str) -> None:
         timestamp = self._append("poke_reply", content)
         self._working_memory_log.append_entry("poke_reply", content, timestamp)
+        publish_reply(content)
 
     def record_wait(self, reason: str) -> None:
         """Record a wait marker that should not reach the user-facing chat history."""
@@ -171,25 +169,6 @@ class ConversationLog:
                 "failed to schedule summarization",
                 extra={"error": str(exc)},
             )
-
-    def to_chat_messages(self) -> List[ChatMessage]:
-        messages: List[ChatMessage] = []
-        for tag, timestamp, payload in self.iter_entries():
-            normalized_timestamp = timestamp or None
-            if tag == "user_message":
-                messages.append(
-                    ChatMessage(role="user", content=payload, timestamp=normalized_timestamp)
-                )
-            elif tag == "poke_reply":
-                messages.append(
-                    ChatMessage(
-                        role="assistant", content=payload, timestamp=normalized_timestamp
-                    )
-                )
-            elif tag == "wait":
-                # Wait markers are orchestration metadata and must not surface to the user
-                continue
-        return messages
 
     def clear(self) -> None:
         with self._lock:

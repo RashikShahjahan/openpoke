@@ -48,13 +48,7 @@ class WorkingMemoryLog:
         self._initialize_file()
 
     def _ensure_directory(self) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "working memory directory creation failed",
-                extra={"error": str(exc), "path": str(self._path)},
-            )
+        self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def _initialize_file(self) -> None:
         with self._lock:

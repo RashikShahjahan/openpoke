@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Optional, Set
 
 from ..agents.execution_agent.batch_manager import ExecutionBatchManager
-from ..agents.execution_agent.runtime import ExecutionResult
 from ..logging_config import logger
 from .triggers import TriggerRecord, get_trigger_service
 

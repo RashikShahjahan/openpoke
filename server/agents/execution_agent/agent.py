@@ -1,33 +1,14 @@
 """Execution Agent implementation."""
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 from ...services.execution import get_execution_agent_logs
-from ...logging_config import logger
 
 
 # Load system prompt template from file
 _prompt_path = Path(__file__).parent / "system_prompt.md"
-if _prompt_path.exists():
-    SYSTEM_PROMPT_TEMPLATE = _prompt_path.read_text(encoding="utf-8").strip()
-else:
-    # Placeholder template - you'll replace this with actual instructions
-    SYSTEM_PROMPT_TEMPLATE = """You are an execution agent responsible for completing specific tasks using available tools.
-
-Agent Name: {agent_name}
-Purpose: {agent_purpose}
-
-Instructions:
-[TO BE FILLED IN BY USER]
-
-You have access to Gmail tools to help complete your tasks. When given instructions:
-1. Analyze what needs to be done
-2. Use the appropriate tools to complete the task
-3. Provide clear status updates on your actions
-
-Be thorough, accurate, and efficient in your execution."""
-
+SYSTEM_PROMPT_TEMPLATE = _prompt_path.read_text(encoding="utf-8").strip()
 
 class ExecutionAgent:
     """Manages state and history for an execution agent."""
@@ -118,6 +99,28 @@ class ExecutionAgent:
     # Log tool invocation and results with truncated content for readability
     def record_tool_execution(self, tool_name: str, arguments: str, result: str) -> None:
         """Record tool execution details."""
+        if tool_name in {
+            "calendarConnectionStatus",
+            "listCalendarEvents",
+            "getCalendarAvailability",
+            "emailConnectionStatus",
+            "listEmailFolders",
+            "searchEmails",
+            "getEmailMessage",
+        }:
+            self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")
+            redaction = (
+                "<calendar result redacted>"
+                if tool_name in {
+                    "calendarConnectionStatus",
+                    "listCalendarEvents",
+                    "getCalendarAvailability",
+                }
+                else "<email result redacted>"
+            )
+            self._log_store.record_tool_response(self.name, tool_name, redaction)
+            return
+
         self._log_store.record_action(self.name, f"Calling {tool_name} with: {arguments[:200]}")
         # Record the tool response
         self._log_store.record_tool_response(self.name, tool_name, result[:500])

@@ -1,14 +1,13 @@
 """Tool definitions for interaction agent."""
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from ...logging_config import logger
 from ...services.conversation import get_conversation_log
 from ...services.execution import (
-    DEFAULT_AGENT_SEARCH_MIN_SCORE,
+    AgentRecord,
     get_agent_roster,
     get_agent_search_index,
     get_execution_agent_logs,
@@ -31,17 +30,26 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "send_message_to_agent",
-            "description": "Deliver instructions to a specific execution agent. Creates a new agent if the name doesn't exist in the roster, or reuses an existing one.",
+            "description": "Deliver instructions to an execution agent. Pass agent_id to reuse an existing roster agent, or pass agent_name and optional agent_type to create a new one.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "agent_id": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Existing positive agent id returned by query_agents_sql or vector_search_agents in this turn. Never guess an id; omit agent_id to create a new agent.",
+                    },
                     "agent_name": {
                         "type": "string",
-                        "description": "Human-readable agent name describing its purpose (e.g., 'Vercel Job Offer', 'Email to Sharanjeet'). This name will be used to identify and potentially reuse the agent."
+                        "description": "Human-readable name for a new agent, e.g. 'Email to Alice' or 'Vercel Job Offer'. Required when agent_id is not provided.",
+                    },
+                    "agent_type": {
+                        "type": "string",
+                        "description": "Optional type for a new agent, e.g. 'email', 'calendar', 'research', 'reminder', or 'general'. Defaults to 'general'.",
                     },
                     "instructions": {"type": "string", "description": "Instructions for the agent to execute."},
                 },
-                "required": ["agent_name", "instructions"],
+                "required": ["instructions"],
                 "additionalProperties": False,
             },
         },
@@ -67,18 +75,50 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "search_agents",
-            "description": "Search existing execution agents by semantic similarity to find the most relevant agents for a task. Returns up to 3 matching agent names.",
+            "name": "query_agents_sql",
+            "description": "Run a read-only SELECT query against the execution-agent roster. Use for exact filters by id, name/search_text, agent_type, status, created_at, updated_at, or last_used_at. Table schema: agents(id, name, agent_type, status, created_at, updated_at, last_used_at, search_text).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": "A single read-only SELECT or WITH query. Do not include semicolons. Use search_text for normalized name/entity matching.",
+                    },
+                    "params": {
+                        "type": "array",
+                        "description": "Optional positional SQL parameters for ? placeholders.",
+                        "items": {},
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum rows to return. Defaults to 50 and is capped at 100.",
+                    },
+                },
+                "required": ["sql"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vector_search_agents",
+            "description": "Semantic search over execution agents. Use when matching task meaning/context; pass agent_ids from query_agents_sql when SQL should narrow the candidate set first.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Short description of the task or context to match against existing execution agent names.",
+                        "description": "Natural-language description of the task, person, thread, project, or context.",
                     },
-                    "min_score": {
-                        "type": "number",
-                        "description": f"Optional minimum similarity score for a match. Defaults to {DEFAULT_AGENT_SEARCH_MIN_SCORE}.",
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum agents to return. Defaults to 5.",
+                    },
+                    "agent_ids": {
+                        "type": "array",
+                        "description": "Optional candidate agent ids from SQL filtering.",
+                        "items": {"type": "integer"},
                     },
                 },
                 "required": ["query"],
@@ -136,28 +176,68 @@ _EXECUTION_BATCH_MANAGER = ExecutionBatchManager()
 
 
 # Create or reuse execution agent and dispatch instructions asynchronously
-def send_message_to_agent(agent_name: str, instructions: str) -> ToolResult:
+def send_message_to_agent(
+    instructions: str,
+    agent_id: int | None = None,
+    agent_name: str | None = None,
+    agent_type: str = "general",
+) -> ToolResult:
     """Send instructions to an execution agent."""
+
     roster = get_agent_roster()
-    roster.load()
-    existing_agents = set(roster.get_agents())
-    is_new = agent_name not in existing_agents
+    is_new = False
 
-    if is_new:
-        roster.add_agent(agent_name)
+    normalized_agent_id: int | None = None
+    if agent_id is not None:
+        try:
+            normalized_agent_id = int(agent_id)
+        except (TypeError, ValueError):
+            return ToolResult(success=False, payload={"error": f"Invalid agent_id: {agent_id}"})
 
-    get_execution_agent_logs().record_request(agent_name, instructions)
+    if normalized_agent_id is not None and normalized_agent_id > 0:
+        record = roster.get_agent(normalized_agent_id)
+        if record is not None and record.status != "active":
+            return ToolResult(success=False, payload={"error": f"Agent is not active: {agent_id}"})
+        if record is None:
+            logger.warning(
+                "Ignoring unknown agent_id for new execution agent: %s",
+                agent_id,
+            )
+    else:
+        record = None
+        if normalized_agent_id is not None:
+            logger.warning(
+                "Ignoring non-positive agent_id for new execution agent: %s",
+                agent_id,
+            )
+
+    if record is None:
+        if not agent_name or not agent_name.strip():
+            agent_name = _default_agent_name(instructions, agent_type)
+            logger.warning(
+                "send_message_to_agent missing agent identity; generated agent name: %s",
+                agent_name,
+            )
+        existing = roster.get_agent_by_name(agent_name.strip())
+        record = existing or roster.add_agent(agent_name, agent_type=agent_type)
+        is_new = existing is None
+
+    touched = roster.touch_agent(record.id)
+    if touched is not None:
+        record = touched
+
+    get_execution_agent_logs().record_request(record.name, instructions)
 
     action = "Created" if is_new else "Reused"
-    logger.info(f"{action} agent: {agent_name}")
+    logger.info(f"{action} agent: {record.name}")
 
     async def _execute_async() -> None:
         try:
-            result = await _EXECUTION_BATCH_MANAGER.execute_agent(agent_name, instructions)
+            result = await _EXECUTION_BATCH_MANAGER.execute_agent(record.name, instructions)
             status = "SUCCESS" if result.success else "FAILED"
-            logger.info(f"Agent '{agent_name}' completed: {status}")
+            logger.info(f"Agent '{record.name}' completed: {status}")
         except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Agent '%s' failed: %s", agent_name, exc)
+            logger.exception("Agent '%s' failed: %s", record.name, exc)
 
     try:
         loop = asyncio.get_running_loop()
@@ -171,37 +251,69 @@ def send_message_to_agent(agent_name: str, instructions: str) -> ToolResult:
         success=True,
         payload={
             "status": "submitted",
-            "agent_name": agent_name,
+            "agent": _agent_payload(record),
             "new_agent_created": is_new,
         },
     )
 
 
-async def search_agents(
+def query_agents_sql(
+    sql: str,
+    params: list[Any] | None = None,
+    limit: int = 50,
+) -> ToolResult:
+    """Run a guarded read-only query against the agent roster."""
+
+    try:
+        rows, truncated = get_agent_roster().query_readonly(sql, params, limit=limit)
+    except Exception as exc:
+        return ToolResult(success=False, payload={"error": str(exc)})
+
+    return ToolResult(
+        success=True,
+        payload={
+            "rows": rows,
+            "truncated": truncated,
+        },
+    )
+
+
+async def vector_search_agents(
     query: str,
-    min_score: float = DEFAULT_AGENT_SEARCH_MIN_SCORE,
+    limit: int = 5,
+    agent_ids: list[int] | None = None,
 ) -> ToolResult:
     """Search existing execution agents by semantic similarity."""
 
-    results = await get_agent_search_index().search_agents(
-        query,
-        limit=3,
-        min_score=min_score,
-    )
+    try:
+        results = await get_agent_search_index().vector_search_agents(
+            query,
+            limit=limit,
+            agent_ids=agent_ids,
+        )
+    except Exception as exc:
+        return ToolResult(success=False, payload={"error": str(exc)})
     return ToolResult(
         success=True,
         payload={
             "query": query,
-            "min_score": min_score,
-            "agents": [
-                {
-                    "agent_name": result.agent_name,
-                    "score": result.score,
-                }
-                for result in results
-            ],
+            "agents": [_agent_payload(result) for result in results],
         },
     )
+
+
+def _agent_payload(record: AgentRecord) -> dict[str, Any]:
+    return record.to_dict()
+
+
+def _default_agent_name(instructions: str, agent_type: str) -> str:
+    normalized_type = (agent_type or "general").strip() or "general"
+    prefix = f"{normalized_type[:1].upper()}{normalized_type[1:]} Task"
+    words = " ".join(str(instructions).split()).strip(" .,:;\t\n")
+    if not words:
+        return prefix
+    summary = " ".join(words.split()[:6]).strip(" .,:;")
+    return f"{prefix}: {summary}"[:80]
 
 
 # Send immediate message to user and record in conversation history
@@ -272,30 +384,23 @@ def get_tool_schemas():
 async def handle_tool_call(name: str, arguments: Any) -> ToolResult:
     """Handle tool calls from interaction agent."""
     try:
-        if isinstance(arguments, str):
-            args = json.loads(arguments) if arguments.strip() else {}
-        elif isinstance(arguments, dict):
-            args = arguments
-        else:
+        if not isinstance(arguments, dict):
             return ToolResult(success=False, payload={"error": "Invalid arguments format"})
 
         if name == "send_message_to_agent":
-            return send_message_to_agent(**args)
-        if name == "search_agents":
-            return await search_agents(**args)
+            return send_message_to_agent(**arguments)
+        if name == "query_agents_sql":
+            return query_agents_sql(**arguments)
+        if name == "vector_search_agents":
+            return await vector_search_agents(**arguments)
         if name == "send_message_to_user":
-            return send_message_to_user(**args)
+            return send_message_to_user(**arguments)
         if name == "send_draft":
-            return send_draft(**args)
+            return send_draft(**arguments)
         if name == "wait":
-            return wait(**args)
+            return wait(**arguments)
 
         logger.warning("unexpected tool", extra={"tool": name})
         return ToolResult(success=False, payload={"error": f"Unknown tool: {name}"})
-    except json.JSONDecodeError:
-        return ToolResult(success=False, payload={"error": "Invalid JSON"})
     except TypeError as exc:
         return ToolResult(success=False, payload={"error": f"Missing required arguments: {exc}"})
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.error("tool call failed", extra={"tool": name, "error": str(exc)})
-        return ToolResult(success=False, payload={"error": "Failed to execute"})

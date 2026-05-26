@@ -104,10 +104,6 @@ class InteractionAgentRuntime:
             transcript_before = self._load_conversation_transcript()
             self.conversation_log.record_agent_message(agent_message)
 
-            if self._is_silent_web_watcher_update(agent_message):
-                self.conversation_log.record_wait("No relevant web watcher update")
-                return InteractionResult(success=True, response="")
-
             system_prompt = build_system_prompt()
             messages = prepare_message_with_history(
                 agent_message, transcript_before, message_type="agent"
@@ -167,15 +163,25 @@ class InteractionAgentRuntime:
             if not parsed_tool_calls:
                 break
 
+            submitted_execution_agent = False
+
             for tool_call in parsed_tool_calls:
                 summary.tool_names.append(tool_call.name)
 
+                result = await self._execute_tool(tool_call)
+
                 if tool_call.name == "send_message_to_agent":
+                    if result.success:
+                        submitted_execution_agent = True
                     agent_name = tool_call.arguments.get("agent_name")
                     if isinstance(agent_name, str) and agent_name:
                         summary.execution_agents.add(agent_name)
-
-                result = await self._execute_tool(tool_call)
+                    if isinstance(result.payload, dict):
+                        agent = result.payload.get("agent")
+                        if isinstance(agent, dict):
+                            payload_name = agent.get("name")
+                            if isinstance(payload_name, str) and payload_name:
+                                summary.execution_agents.add(payload_name)
 
                 if result.user_message:
                     summary.user_messages.append(result.user_message)
@@ -186,6 +192,10 @@ class InteractionAgentRuntime:
                     "content": self._format_tool_result(tool_call, result),
                 }
                 messages.append(tool_message)
+
+            if submitted_execution_agent:
+                logger.info("Interaction loop paused after dispatching execution agent")
+                break
         else:
             raise RuntimeError("Reached tool iteration limit without final response")
 
@@ -201,9 +211,6 @@ class InteractionAgentRuntime:
             if rendered.strip():
                 return rendered
         return self.conversation_log.load_transcript()
-
-    def _is_silent_web_watcher_update(self, agent_message: str) -> bool:
-        return "No relevant web watcher update" in agent_message
 
     # Execute API call to OpenRouter with system prompt, messages, and tool schemas
     async def _make_llm_call(
@@ -312,13 +319,7 @@ class InteractionAgentRuntime:
             return ToolResult(success=False, payload={"error": str(exc)})
 
         if not isinstance(result, ToolResult):
-            logger.warning(
-                "Tool did not return ToolResult; coercing",
-                extra={"tool": tool_call.name},
-            )
-            wrapped = ToolResult(success=True, payload=result)
-            self._log_tool_invocation(tool_call, stage="done", result=wrapped)
-            return wrapped
+            raise TypeError(f"Tool '{tool_call.name}' returned {type(result).__name__}")
 
         status = "success" if result.success else "error"
         logger.debug(
@@ -349,16 +350,7 @@ class InteractionAgentRuntime:
             key = "result" if result.success else "error"
             payload[key] = result.payload
 
-        return self._safe_json_dump(payload)
-
-    # Safely serialize objects to JSON with fallback to string representation
-    def _safe_json_dump(self, payload: Any) -> str:
-        """Serialize payload to JSON, falling back to repr on failure."""
-
-        try:
-            return json.dumps(payload, default=str)
-        except TypeError:
-            return repr(payload)
+        return json.dumps(payload, default=str)
 
     # Log tool execution stages (start, done, error) with structured metadata
     def _log_tool_invocation(
@@ -392,11 +384,28 @@ class InteractionAgentRuntime:
             log_payload.update(detail)
 
         if stage == "done":
-            logger.info(f"Tool '{tool_call.name}' completed")
+            if result is not None and not result.success:
+                logger.warning(
+                    "Tool '%s' completed with error: %s",
+                    tool_call.name,
+                    self._tool_error_summary(result),
+                )
+            else:
+                logger.info(f"Tool '{tool_call.name}' completed")
         elif stage in {"error", "rejected"}:
             logger.warning(f"Tool '{tool_call.name}' {stage}")
         else:
             logger.debug(f"Tool '{tool_call.name}' {stage}")
+
+    def _tool_error_summary(self, result: ToolResult) -> str:
+        payload = result.payload
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if error:
+                return str(error)
+        if payload is not None:
+            return str(payload)
+        return "unknown error"
 
     # Determine final user-facing response from interaction loop summary
     def _finalize_response(self, summary: _LoopSummary) -> str:

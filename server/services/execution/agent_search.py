@@ -1,171 +1,243 @@
-"""Vector search over execution agent names."""
+"""Vector search over persisted execution agents."""
 
 from __future__ import annotations
 
-import json
-import math
+import importlib.resources
+import struct
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
-from ...logging_config import logger
+from sqlalchemy import (
+    Column,
+    Index,
+    Integer,
+    LargeBinary,
+    MetaData,
+    Table,
+    Text,
+    create_engine,
+    event,
+    func,
+    select,
+)
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import Engine
+
 from ...openrouter_client import request_embeddings
-from .roster import AgentRoster, get_agent_roster
+from .roster import AgentRecord, AgentRoster, DEFAULT_AGENT_DB_PATH, get_agent_roster
 
 
 DEFAULT_AGENT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
-DEFAULT_AGENT_SEARCH_MIN_SCORE = 0.35
-_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-_INDEX_PATH = _DATA_DIR / "execution_agents" / "agent_embeddings.json"
+_TABLE_NAME = "agent_embeddings"
+_EMBEDDING_COLUMN = "embedding"
 
-
-@dataclass(frozen=True)
-class AgentSearchResult:
-    """A matching execution agent name and similarity score."""
-
-    agent_name: str
-    score: float
+_metadata = MetaData()
+_agent_embeddings = Table(
+    _TABLE_NAME,
+    _metadata,
+    Column("id", Integer, primary_key=True),
+    Column("agent_id", Integer, nullable=False, unique=True),
+    Column("model", Text, nullable=False),
+    Column("dimension", Integer, nullable=False),
+    Column("embedding", LargeBinary, nullable=False),
+    Column("updated_at", Text, nullable=False, server_default=func.current_timestamp()),
+    Index(f"idx_{_TABLE_NAME}_model", "model"),
+    Index(f"idx_{_TABLE_NAME}_agent_id", "agent_id"),
+)
 
 
 class AgentSearchIndex:
-    """Caches agent name embeddings and ranks agents by query similarity."""
+    """Caches agent embeddings in SQLite and ranks agents with sqliteai-vector."""
 
     def __init__(
         self,
-        index_path: Path,
+        db_path: Path = DEFAULT_AGENT_DB_PATH,
         *,
         roster: AgentRoster | None = None,
         embedding_model: str = DEFAULT_AGENT_EMBEDDING_MODEL,
-        min_score: float = DEFAULT_AGENT_SEARCH_MIN_SCORE,
     ) -> None:
-        self._index_path = index_path
+        self._db_path = db_path
         self._roster = roster or get_agent_roster()
         self._embedding_model = embedding_model
-        self._min_score = min_score
+        self._engine = _create_vector_engine(db_path)
         self._lock = threading.Lock()
 
-    async def search_agents(
+    async def vector_search_agents(
         self,
         query: str,
-        limit: int = 3,
-        min_score: float | None = None,
-    ) -> list[AgentSearchResult]:
-        """Return the top matching execution agents for a query."""
+        *,
+        limit: int = 5,
+        agent_ids: Sequence[int] | None = None,
+    ) -> list[AgentRecord]:
+        """Return agents ranked by semantic similarity to the query."""
 
         normalized_query = query.strip()
         if not normalized_query or limit <= 0:
             return []
 
-        self._roster.load()
-        agent_names = self._roster.get_agents()
-        if not agent_names:
+        candidates = self._candidate_records(agent_ids)
+        if not candidates:
             return []
 
-        index = self._load_index()
-        embeddings = self._extract_cached_embeddings(index)
-        agent_name_set = set(agent_names)
-        embeddings = {
-            name: embedding
-            for name, embedding in embeddings.items()
-            if name in agent_name_set
-        }
-
+        await self._ensure_embeddings(candidates)
         query_embedding = (await self._embed_texts([normalized_query]))[0]
-        score_threshold = self._min_score if min_score is None else min_score
-        results: list[AgentSearchResult] = []
-        for name, embedding in embeddings.items():
-            if name not in agent_name_set:
-                continue
-            score = _cosine_similarity(query_embedding, embedding)
-            if score >= score_threshold:
-                results.append(AgentSearchResult(agent_name=name, score=score))
+        query_blob = _embedding_to_blob(query_embedding)
+        candidate_ids = [record.id for record in candidates]
+        scan_limit = max(1, self._embedding_count(), len(candidate_ids))
 
-        results.sort(key=lambda result: result.score, reverse=True)
-        return results[:limit]
+        with self._lock:
+            with self._engine.connect() as conn:
+                self._ensure_schema()
+                self._initialize_vector(conn, len(query_embedding))
+                placeholders = ",".join("?" for _ in candidate_ids)
+                rows = list(
+                    conn.exec_driver_sql(
+                        f"""
+                        SELECT e.agent_id, v.distance
+                        FROM vector_full_scan(?, ?, vector_as_f32(?, ?), ?) AS v
+                        JOIN {_TABLE_NAME} AS e ON e.rowid = v.rowid
+                        JOIN agents AS a ON a.id = e.agent_id
+                        WHERE e.model = ?
+                          AND a.status = 'active'
+                          AND e.agent_id IN ({placeholders})
+                        """,
+                        (
+                            _TABLE_NAME,
+                            _EMBEDDING_COLUMN,
+                            query_blob,
+                            len(query_embedding),
+                            scan_limit,
+                            self._embedding_model,
+                            *candidate_ids,
+                        ),
+                    )
+                )
 
-    async def ensure_agent_embedding(self, agent_name: str) -> bool:
+        records_by_id = {record.id: record for record in candidates}
+        ordered: list[AgentRecord] = []
+        for agent_id, _distance in sorted(rows, key=lambda row: float(row[1])):
+            record = records_by_id.get(int(agent_id))
+            if record is not None:
+                ordered.append(record)
+            if len(ordered) >= limit:
+                break
+        return ordered
+
+    async def ensure_agent_embedding(self, agent_id: int) -> bool:
         """Create and cache an embedding for an existing agent if missing."""
 
-        normalized_name = agent_name.strip()
-        if not normalized_name:
+        record = self._roster.get_agent(agent_id)
+        if record is None or record.status != "active":
+            return False
+        if self._has_embedding(record.id):
             return False
 
-        self._roster.load()
-        agent_names = self._roster.get_agents()
-        if normalized_name not in agent_names:
-            return False
-
-        index = self._load_index()
-        embeddings = self._extract_cached_embeddings(index)
-        if normalized_name in embeddings:
-            return False
-
-        embedding = (await self._embed_texts([normalized_name]))[0]
-        embeddings[normalized_name] = embedding
-        self._save_embeddings(embeddings, valid_agent_names=agent_names)
+        embedding = (await self._embed_texts([_embedding_text(record)]))[0]
+        self._save_embeddings([(record.id, embedding)])
         return True
 
-    def _load_index(self) -> dict[str, Any]:
-        """Load the persisted embedding index."""
+    def _candidate_records(self, agent_ids: Sequence[int] | None) -> list[AgentRecord]:
+        self._roster.load()
+        if agent_ids is None:
+            return self._roster.list_agents(status="active")
+
+        records: list[AgentRecord] = []
+        seen: set[int] = set()
+        for raw_id in agent_ids:
+            try:
+                agent_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if agent_id in seen:
+                continue
+            seen.add(agent_id)
+            record = self._roster.get_agent(agent_id)
+            if record is not None and record.status == "active":
+                records.append(record)
+        return records
+
+    async def _ensure_embeddings(self, records: Sequence[AgentRecord]) -> None:
+        missing = [record for record in records if not self._has_embedding(record.id)]
+        if not missing:
+            return
+
+        embeddings = await self._embed_texts([_embedding_text(record) for record in missing])
+        self._save_embeddings(
+            (record.id, embedding) for record, embedding in zip(missing, embeddings)
+        )
+
+    def _ensure_schema(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        _metadata.create_all(self._engine, tables=[_agent_embeddings])
+
+    def _initialize_vector(self, conn: Any, dimension: int) -> None:
+        conn.exec_driver_sql(
+            "SELECT vector_init(?, ?, ?)",
+            (
+                _TABLE_NAME,
+                _EMBEDDING_COLUMN,
+                f"type=FLOAT32,dimension={dimension},distance=COSINE",
+            ),
+        )
+
+    def _has_embedding(self, agent_id: int) -> bool:
+        with self._lock:
+            self._ensure_schema()
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    select(_agent_embeddings.c.id).where(
+                        _agent_embeddings.c.agent_id == agent_id,
+                        _agent_embeddings.c.model == self._embedding_model,
+                    ).limit(1)
+                ).first()
+            return row is not None
+
+    def _embedding_count(self) -> int:
+        with self._lock:
+            self._ensure_schema()
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    select(func.count()).select_from(_agent_embeddings).where(
+                        _agent_embeddings.c.model == self._embedding_model
+                    )
+                ).one()
+            return int(row[0])
+
+    def _save_embeddings(self, embeddings: Iterable[tuple[int, Sequence[float]]]) -> None:
+        embeddings = list(embeddings)
+        if not embeddings:
+            return
 
         with self._lock:
-            try:
-                if not self._index_path.exists():
-                    return {}
-                data = json.loads(self._index_path.read_text(encoding="utf-8"))
-                return data if isinstance(data, dict) else {}
-            except Exception as exc:
-                logger.warning(f"Failed to load agent embedding index: {exc}")
-                return {}
-
-    def _extract_cached_embeddings(self, index: dict[str, Any]) -> dict[str, list[float]]:
-        """Return cached embeddings if they match the current model."""
-
-        if index.get("model") != self._embedding_model:
-            return {}
-
-        raw_agents = index.get("agents")
-        if not isinstance(raw_agents, dict):
-            return {}
-
-        embeddings: dict[str, list[float]] = {}
-        for name, raw_embedding in raw_agents.items():
-            if (
-                isinstance(name, str)
-                and isinstance(raw_embedding, list)
-                and raw_embedding
-                and all(isinstance(value, (int, float)) for value in raw_embedding)
-            ):
-                embeddings[name] = raw_embedding
-        return embeddings
-
-    def _save_embeddings(
-        self,
-        embeddings: dict[str, list[float]],
-        *,
-        valid_agent_names: Sequence[str],
-    ) -> None:
-        """Persist embeddings for currently active agents only."""
-
-        valid_agent_name_set = set(valid_agent_names)
-        payload = {
-            "model": self._embedding_model,
-            "agents": {
-                name: embedding
-                for name, embedding in embeddings.items()
-                if name in valid_agent_name_set
-            },
-        }
-
-        with self._lock:
-            try:
-                self._index_path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = self._index_path.with_suffix(".tmp")
-                temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                temp_path.replace(self._index_path)
-            except Exception as exc:
-                logger.warning(f"Failed to save agent embedding index: {exc}")
+            self._ensure_schema()
+            with self._engine.begin() as conn:
+                dimension = len(embeddings[0][1])
+                self._initialize_vector(conn, dimension)
+                for agent_id, embedding in embeddings:
+                    embedding_dimension = len(embedding)
+                    if embedding_dimension != dimension:
+                        raise ValueError("Embedding dimensions did not match")
+                    embedding_blob = _embedding_to_blob(embedding)
+                    conn.execute(
+                        sqlite_insert(_agent_embeddings)
+                        .values(
+                            agent_id=agent_id,
+                            model=self._embedding_model,
+                            dimension=embedding_dimension,
+                            embedding=func.vector_as_f32(embedding_blob, embedding_dimension),
+                        )
+                        .on_conflict_do_update(
+                            index_elements=[_agent_embeddings.c.agent_id],
+                            set_={
+                                "model": self._embedding_model,
+                                "dimension": embedding_dimension,
+                                "embedding": func.vector_as_f32(embedding_blob, embedding_dimension),
+                                "updated_at": func.current_timestamp(),
+                            },
+                        )
+                    )
+                conn.exec_driver_sql("SELECT vector_quantize(?, ?)", (_TABLE_NAME, _EMBEDDING_COLUMN))
 
     async def _embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed one or more texts using OpenRouter."""
@@ -179,10 +251,10 @@ class AgentSearchIndex:
             raise ValueError("Embedding response data was not a list")
 
         indexed_embeddings: dict[int, list[float]] = {}
-        for fallback_index, item in enumerate(raw_items):
+        for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            index = item.get("index", fallback_index)
+            index = item.get("index")
             embedding = item.get("embedding")
             if (
                 isinstance(index, int)
@@ -197,31 +269,56 @@ class AgentSearchIndex:
             raise ValueError("Embedding response did not include all requested inputs")
         return embeddings
 
-def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
-    if len(left) != len(right) or not left:
-        return 0.0
 
-    dot_product = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0.0 or right_norm == 0.0:
-        return 0.0
-    return dot_product / (left_norm * right_norm)
+def _embedding_text(record: AgentRecord) -> str:
+    return f"{record.name}\nType: {record.agent_type}\nSearch text: {record.search_text}"
 
 
-_agent_search_index = AgentSearchIndex(_INDEX_PATH)
+def _embedding_to_blob(embedding: Sequence[float]) -> bytes:
+    return struct.pack(f"<{len(embedding)}f", *embedding)
+
+
+def _create_vector_engine(db_path: Path) -> Engine:
+    engine = create_engine(f"sqlite:///{db_path}", future=True, connect_args={"timeout": 30})
+    ext_path = _sqlite_vector_extension_path()
+
+    @event.listens_for(engine, "connect")
+    def _configure_connection(dbapi_connection: Any, _connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+        dbapi_connection.enable_load_extension(True)
+        try:
+            dbapi_connection.load_extension(str(ext_path))
+        finally:
+            dbapi_connection.enable_load_extension(False)
+
+    return engine
+
+
+def _sqlite_vector_extension_path() -> Path:
+    binaries = importlib.resources.files("sqlite_vector.binaries")
+    for candidate in ("vector", "vector.dylib", "vector.so", "vector.dll"):
+        path = binaries / candidate
+        if path.is_file():
+            return Path(str(path))
+    raise FileNotFoundError("Could not find sqlite_vector extension binary")
+
+
+_agent_search_index = AgentSearchIndex(DEFAULT_AGENT_DB_PATH)
 
 
 def get_agent_search_index() -> AgentSearchIndex:
-    """Get the singleton agent search index."""
+    """Get the singleton agent vector search index."""
 
     return _agent_search_index
 
 
+
 __all__ = [
     "AgentSearchIndex",
-    "AgentSearchResult",
     "DEFAULT_AGENT_EMBEDDING_MODEL",
-    "DEFAULT_AGENT_SEARCH_MIN_SCORE",
     "get_agent_search_index",
 ]

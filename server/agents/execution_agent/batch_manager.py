@@ -10,6 +10,8 @@ from typing import Dict, List, Optional
 
 from .runtime import ExecutionAgentRuntime, ExecutionResult
 from ...logging_config import logger
+from ...messaging.context import get_reply_target, set_reply_target
+from ...messaging.types import ReplyTarget
 
 
 @dataclass
@@ -28,6 +30,7 @@ class _BatchState:
     """Collect results for a single interaction-agent turn."""
 
     batch_id: str
+    reply_target: Optional[ReplyTarget] = None
     created_at: datetime = field(default_factory=datetime.now)
     pending: int = 0
     results: List[ExecutionResult] = field(default_factory=list)
@@ -100,7 +103,10 @@ class ExecutionBatchManager:
         async with self._batch_lock:
             if self._batch_state is None:
                 batch_id = str(uuid.uuid4())
-                self._batch_state = _BatchState(batch_id=batch_id)
+                self._batch_state = _BatchState(
+                    batch_id=batch_id,
+                    reply_target=get_reply_target(),
+                )
             else:
                 batch_id = self._batch_state.batch_id
 
@@ -136,12 +142,18 @@ class ExecutionBatchManager:
 
             if state.pending == 0:
                 dispatch_payload = self._format_batch_payload(state.results)
+                reply_target = state.reply_target
                 agent_names = [entry.agent_name for entry in state.results]
                 logger.info(f"Execution batch completed: {', '.join(agent_names)}")
                 self._batch_state = None
 
         if dispatch_payload:
-            await self._dispatch_to_interaction_agent(dispatch_payload)
+            previous_target = get_reply_target()
+            set_reply_target(reply_target)
+            try:
+                await self._dispatch_to_interaction_agent(dispatch_payload)
+            finally:
+                set_reply_target(previous_target)
 
     # Return list of currently pending execution requests for monitoring purposes
     def get_pending_executions(self) -> List[Dict[str, str]]:
@@ -184,10 +196,6 @@ class ExecutionBatchManager:
         from ..interaction_agent.runtime import InteractionAgentRuntime
 
         runtime = InteractionAgentRuntime()
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(runtime.handle_agent_message(payload))
-            return
-
-        loop.create_task(runtime.handle_agent_message(payload))
+        result = await runtime.handle_agent_message(payload)
+        if not result.success:
+            raise RuntimeError(result.error or "Interaction agent failed to handle execution results")

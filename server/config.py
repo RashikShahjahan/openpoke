@@ -28,72 +28,71 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
-DEFAULT_APP_NAME = "OpenPoke Server"
-DEFAULT_APP_VERSION = "0.3.0"
-DEFAULT_LLM_API_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_CHAT_MODEL = "openrouter/free"
-
-
-def _env_model(name: str) -> str:
-    return os.getenv(name) or os.getenv("OPENPOKE_LLM_MODEL") or DEFAULT_OPENROUTER_CHAT_MODEL
-
-
-def _env_int(name: str, fallback: int) -> int:
-    try:
-        return int(os.getenv(name, str(fallback)))
-    except (TypeError, ValueError):
-        return fallback
-
-
 class Settings(BaseModel):
-    """Application settings with lightweight env fallbacks."""
-
-    # App metadata
-    app_name: str = Field(default=DEFAULT_APP_NAME)
-    app_version: str = Field(default=DEFAULT_APP_VERSION)
-
-    # Server runtime
-    server_host: str = Field(default=os.getenv("OPENPOKE_HOST", "0.0.0.0"))
-    server_port: int = Field(default=_env_int("OPENPOKE_PORT", 8001))
+    """Application settings."""
 
     # LLM API and model selection
-    llm_api_base_url: str = Field(
-        default=os.getenv("OPENPOKE_LLM_BASE_URL", DEFAULT_LLM_API_BASE_URL)
+    llm_api_base_url: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_LLM_BASE_URL")
     )
-    interaction_agent_model: str = Field(default=_env_model("OPENPOKE_INTERACTION_AGENT_MODEL"))
-    execution_agent_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_MODEL"))
-    execution_agent_search_model: str = Field(default=_env_model("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
-    summarizer_model: str = Field(default=_env_model("OPENPOKE_SUMMARIZER_MODEL"))
-    email_classifier_model: str = Field(default=_env_model("OPENPOKE_EMAIL_CLASSIFIER_MODEL"))
-    web_watcher_evaluator_model: str = Field(default=_env_model("OPENPOKE_WEB_WATCHER_EVALUATOR_MODEL"))
+    interaction_agent_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_INTERACTION_AGENT_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
+    execution_agent_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EXECUTION_AGENT_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
+    execution_agent_search_model: Optional[str] = Field(default=os.getenv("OPENPOKE_EXECUTION_AGENT_SEARCH_MODEL"))
+    summarizer_model: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_SUMMARIZER_MODEL") or os.getenv("OPENPOKE_LLM_MODEL")
+    )
+    embeddings_api_base_url: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EMBEDDINGS_BASE_URL")
+    )
 
     # Credentials / integrations
     openrouter_api_key: Optional[str] = Field(
-        default=os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENPOKE_LLM_API_KEY")
+        default=os.getenv("OPENROUTER_API_KEY")
     )
-    composio_gmail_auth_config_id: Optional[str] = Field(default=os.getenv("COMPOSIO_GMAIL_AUTH_CONFIG_ID"))
-    composio_api_key: Optional[str] = Field(default=os.getenv("COMPOSIO_API_KEY"))
+    embeddings_api_key: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EMBEDDINGS_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+    )
 
-    # HTTP behaviour
-    cors_allow_origins_raw: str = Field(default=os.getenv("OPENPOKE_CORS_ALLOW_ORIGINS", "*"))
-    enable_docs: bool = Field(default=os.getenv("OPENPOKE_ENABLE_DOCS", "1") != "0")
-    docs_url: Optional[str] = Field(default=os.getenv("OPENPOKE_DOCS_URL", "/docs"))
+    # Signal messaging integration
+    signal_http_url: str = Field(
+        default=os.getenv("OPENPOKE_SIGNAL_HTTP_URL", "http://127.0.0.1:8080")
+    )
+    signal_account: Optional[str] = Field(default=os.getenv("OPENPOKE_SIGNAL_ACCOUNT"))
+    signal_allowed_senders_raw: str = Field(
+        default=os.getenv("OPENPOKE_SIGNAL_ALLOWED_SENDERS", "")
+    )
+
+    # Local read-only calendar integration
+    calendar_ics_path: Optional[str] = Field(default=os.getenv("OPENPOKE_CALENDAR_ICS_PATH"))
+    calendar_refresh_seconds: int = Field(
+        default=int(os.getenv("OPENPOKE_CALENDAR_REFRESH_SECONDS", "60"))
+    )
+
+    # Local read-only email integration backed by Thunderbird mbox storage
+    email_thunderbird_profile_path: Optional[str] = Field(
+        default=os.getenv("OPENPOKE_EMAIL_THUNDERBIRD_PROFILE_PATH")
+    )
+    email_refresh_seconds: int = Field(
+        default=int(os.getenv("OPENPOKE_EMAIL_REFRESH_SECONDS", "60"))
+    )
 
     # Summarisation controls
     conversation_summary_threshold: int = Field(default=100)
     conversation_summary_tail_size: int = Field(default=10)
 
     @property
-    def cors_allow_origins(self) -> List[str]:
-        """Parse CORS origins from comma-separated string."""
-        if self.cors_allow_origins_raw.strip() in {"", "*"}:
-            return ["*"]
-        return [origin.strip() for origin in self.cors_allow_origins_raw.split(",") if origin.strip()]
-
-    @property
-    def resolved_docs_url(self) -> Optional[str]:
-        """Return documentation URL when docs are enabled."""
-        return (self.docs_url or "/docs") if self.enable_docs else None
+    def signal_allowed_senders(self) -> List[str]:
+        """Parse Signal sender allowlist from comma-separated phone numbers."""
+        return [
+            sender.strip()
+            for sender in self.signal_allowed_senders_raw.split(",")
+            if sender.strip()
+        ]
 
     @property
     def summarization_enabled(self) -> bool:

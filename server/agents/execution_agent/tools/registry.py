@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List
 
-from . import gmail, triggers, web_watchers
+from . import calendar, email, triggers, web
 from ..tasks import get_task_registry, get_task_schemas
 
 
@@ -13,10 +13,11 @@ def get_tool_schemas() -> List[Dict[str, Any]]:
     """Return OpenAI/OpenRouter-compatible tool schemas."""
 
     return [
-        *gmail.get_schemas(),
         *get_task_schemas(),
+        *calendar.get_schemas(),
+        *email.get_schemas(),
+        *web.get_schemas(),
         *triggers.get_schemas(),
-        *web_watchers.get_schemas(),
     ]
 
 
@@ -25,10 +26,11 @@ def get_tool_registry(agent_name: str) -> Dict[str, Callable[..., Any]]:
     """Return Python callables for executing tools by name."""
 
     registry: Dict[str, Callable[..., Any]] = {}
-    registry.update(gmail.build_registry(agent_name))
     registry.update(get_task_registry(agent_name))
+    registry.update(calendar.build_registry(agent_name))
+    registry.update(email.build_registry(agent_name))
+    registry.update(web.build_registry(agent_name))
     registry.update(triggers.build_registry(agent_name))
-    registry.update(web_watchers.build_registry(agent_name))
     return registry
 
 

@@ -8,9 +8,6 @@ from typing import Optional
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..logging_config import logger
-
-
 class TimezoneStore:
     """Stores a single timezone string supplied by the client UI."""
 
@@ -26,10 +23,6 @@ class TimezoneStore:
         except FileNotFoundError:
             self._cached = None
             return
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("failed to read timezone file", extra={"error": str(exc)})
-            self._cached = None
-            return
 
         self._cached = value or None
 
@@ -43,16 +36,12 @@ class TimezoneStore:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(validated, encoding="utf-8")
             self._cached = validated
-            logger.info("updated timezone preference", extra={"timezone": validated})
 
     def clear(self) -> None:
         with self._lock:
             self._cached = None
-            try:
-                if self._path.exists():
-                    self._path.unlink()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("failed to clear timezone file", extra={"error": str(exc)})
+            if self._path.exists():
+                self._path.unlink()
 
     def _validate(self, timezone_name: str) -> str:
         candidate = (timezone_name or "").strip()
